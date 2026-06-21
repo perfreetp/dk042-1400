@@ -1,7 +1,8 @@
 import type { Draft } from '@/types';
-import { User, Image, Target, CheckCircle, AlertCircle, Clock, ChevronRight, ChevronLeft } from 'lucide-react';
-import { useState } from 'react';
+import { User, Image, Target, CheckCircle, AlertCircle, Clock, ChevronRight, ChevronLeft, FileCheck, MessageSquareWarning } from 'lucide-react';
+import { useState, useMemo } from 'react';
 import { cn } from '@/lib/utils';
+import { useReviewStore } from '@/store/useReviewStore';
 
 interface ProgressSidebarProps {
   draft: Draft;
@@ -26,30 +27,52 @@ const completenessLabels: Record<string, string> = {
 
 export function ProgressSidebar({ draft }: ProgressSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const getReviewProgress = useReviewStore(state => state.getReviewProgress);
 
   const patientInfo = draft.patientInfo;
   const images = draft.images;
   const judgment = draft.judgment;
+  const handoverNotes = draft.handoverNotes || [];
 
   const totalMarks = images.reduce((sum, img) => sum + img.marks.length, 0);
   const stainCount = images.reduce((sum, img) => sum + img.marks.filter(m => m.type === 'stain').length, 0);
   const shadowCount = images.reduce((sum, img) => sum + img.marks.filter(m => m.type === 'shadow').length, 0);
 
+  const pendingNoteCount = handoverNotes.filter(n => n.isPending).length;
+
   const patientFilled = patientInfo.studyNo && patientInfo.name ? 2 : (patientInfo.studyNo || patientInfo.name ? 1 : 0);
   const hasImages = images.length > 0;
   const hasMarks = totalMarks > 0;
   const judgmentStarted = judgment.clarity || judgment.completeness || judgment.defects.length > 0;
-  const judgmentCompleted = judgment.clarity && judgment.completeness && judgment.conclusion;
+  const judgmentCompleted = !!(judgment.clarity && judgment.completeness && judgment.conclusion);
+  const hasPreliminaryReview = !!judgment.preliminaryReview;
+  const hasFinalReview = !!judgment.finalReview;
+  const needsReview = judgment.needsReview;
 
-  const steps = [
-    { key: 'patient', label: '患者信息', done: patientFilled >= 2, partial: patientFilled === 1, desc: patientFilled >= 2 ? '已填写' : patientFilled === 1 ? '部分填写' : '未填写' },
-    { key: 'images', label: '上传图片', done: hasImages, desc: hasImages ? `${images.length} 张` : '未上传' },
-    { key: 'marks', label: '标记问题', done: hasMarks, optional: true, desc: hasMarks ? `${totalMarks} 处标记` : '无标记' },
-    { key: 'judgment', label: '质量判定', done: judgmentCompleted, partial: judgmentStarted && !judgmentCompleted, desc: judgmentCompleted ? (judgment.conclusion === 'pass' ? '合格' : '不合格') : judgmentStarted ? '进行中' : '未开始' },
-  ];
+  const steps = useMemo(() => {
+    const baseSteps = [
+      { key: 'patient', label: '患者信息', done: patientFilled >= 2, partial: patientFilled === 1, desc: patientFilled >= 2 ? '已填写' : patientFilled === 1 ? '部分填写' : '未填写' },
+      { key: 'images', label: '上传图片', done: hasImages, desc: hasImages ? `${images.length} 张` : '未上传' },
+      { key: 'marks', label: '标记问题', done: hasMarks, optional: true, desc: hasMarks ? `${totalMarks} 处标记` : '无标记' },
+    ];
 
+    if (needsReview) {
+      baseSteps.push(
+        { key: 'preliminary', label: '初判', done: hasPreliminaryReview, desc: hasPreliminaryReview ? (judgment.preliminaryReview?.conclusion === 'pass' ? '初判合格' : '初判不合格') : '未开始' },
+        { key: 'final', label: '复核', done: hasFinalReview, partial: hasPreliminaryReview && !hasFinalReview, desc: hasFinalReview ? (judgment.finalReview?.conclusion === 'pass' ? '复核合格' : '复核不合格') : hasPreliminaryReview ? '待复核' : '未开始' }
+      );
+    } else {
+      baseSteps.push(
+        { key: 'judgment', label: '质量判定', done: judgmentCompleted, partial: judgmentStarted && !judgmentCompleted, desc: judgmentCompleted ? (judgment.conclusion === 'pass' ? '合格' : '不合格') : judgmentStarted ? '进行中' : '未开始' }
+      );
+    }
+
+    return baseSteps;
+  }, [patientFilled, hasImages, hasMarks, totalMarks, images.length, needsReview, hasPreliminaryReview, hasFinalReview, judgmentCompleted, judgmentStarted, judgment]);
+
+  const progressPercent = useMemo(() => getReviewProgress(), [draft, getReviewProgress]);
   const completedSteps = steps.filter(s => s.done).length;
-  const progressPercent = Math.round((completedSteps / steps.filter(s => !s.optional).length) * 100);
+  const requiredSteps = steps.filter(s => !s.optional).length;
 
   return (
     <div
@@ -59,21 +82,47 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
       )}
     >
       <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-        <div className="bg-medical-600 text-white px-4 py-3 flex items-center justify-between cursor-pointer"
+        <div className={cn(
+          "px-4 py-3 flex items-center justify-between cursor-pointer transition-colors",
+          !judgmentCompleted && needsReview && !hasFinalReview
+            ? "bg-orange-600 text-white"
+            : !judgmentCompleted
+              ? "bg-yellow-600 text-white"
+              : "bg-medical-600 text-white"
+        )}
           onClick={() => setCollapsed(!collapsed)}
         >
           {!collapsed && (
             <>
-              <div>
-                <div className="font-semibold text-sm">核查进度</div>
+              <div className="flex-1">
+                <div className="font-semibold text-sm flex items-center gap-2">
+                  核查进度
+                  {pendingNoteCount > 0 && (
+                    <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                      <MessageSquareWarning size={10} />
+                      {pendingNoteCount}
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-white/80 mt-0.5">
-                  {completedSteps}/{steps.filter(s => !s.optional).length} 步骤完成 · {progressPercent}%
+                  {completedSteps}/{requiredSteps} 步骤完成 · {progressPercent}%
+                  {!judgmentCompleted && (
+                    <span className="ml-2 text-white font-medium">
+                      {needsReview && !hasPreliminaryReview ? '· 待初判' :
+                       needsReview && !hasFinalReview ? '· 待复核' : '· 未完成判定'}
+                    </span>
+                  )}
                 </div>
               </div>
             </>
           )}
           {collapsed && (
             <div className="w-full text-center">
+              {pendingNoteCount > 0 && (
+                <div className="text-xs bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center mx-auto mb-1">
+                  {pendingNoteCount}
+                </div>
+              )}
               <div className="text-xs font-medium">进度</div>
               <div className="text-lg font-bold">{progressPercent}%</div>
             </div>
@@ -87,14 +136,19 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
 
         {!collapsed && (
           <>
-            {!collapsed && (
-              <div className="h-1.5 bg-gray-100">
-                <div
-                  className="h-full bg-medical-500 transition-all duration-500"
-                  style={{ width: `${progressPercent}%` }}
-                />
-              </div>
-            )}
+            <div className="h-1.5 bg-gray-100">
+              <div
+                className={cn(
+                  "h-full transition-all duration-500",
+                  !judgmentCompleted && needsReview && !hasFinalReview
+                    ? "bg-orange-500"
+                    : !judgmentCompleted
+                      ? "bg-yellow-500"
+                      : "bg-medical-500"
+                )}
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
 
             <div className="p-4 space-y-4">
               <div className="bg-gray-50 rounded-lg p-3">
@@ -195,42 +249,129 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
                 </div>
               )}
 
-              {judgmentStarted && (
-                <div className="bg-gray-50 rounded-lg p-3 text-sm">
-                  <div className="font-medium text-gray-700 mb-2">判定状态</div>
-                  <div className="space-y-1 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">清晰度</span>
-                      <span className="font-medium text-gray-800">
-                        {judgment.clarity ? clarityLabels[judgment.clarity] : '未选择'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">完整性</span>
-                      <span className="font-medium text-gray-800">
-                        {judgment.completeness ? completenessLabels[judgment.completeness] : '未选择'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">缺陷</span>
-                      <span className="font-medium text-gray-800">
-                        {judgment.defects.length > 0 ? `${judgment.defects.length} 项` : '无'}
-                      </span>
-                    </div>
-                    {judgment.conclusion && (
-                      <div className={cn(
-                        'mt-2 pt-2 border-t border-gray-200 flex items-center justify-center gap-1.5 py-1 rounded font-semibold',
-                        judgment.conclusion === 'pass' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                      )}>
-                        {judgment.conclusion === 'pass' ? (
-                          <CheckCircle size={14} />
-                        ) : (
-                          <AlertCircle size={14} />
-                        )}
-                        {judgment.conclusion === 'pass' ? '合格' : '不合格'}
-                      </div>
+              {pendingNoteCount > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <MessageSquareWarning size={14} className="text-red-600" />
+                    <span className="text-xs font-semibold text-red-700">
+                      待确认事项 ({pendingNoteCount}条)
+                    </span>
+                  </div>
+                  <div className="text-xs text-red-600">
+                    {handoverNotes.filter(n => n.isPending).slice(0, 2).map(n => (
+                      <div key={n.id} className="truncate">· {n.content}</div>
+                    ))}
+                    {pendingNoteCount > 2 && (
+                      <div className="text-red-400">...还有 {pendingNoteCount - 2} 条</div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {(judgmentStarted || hasPreliminaryReview) && (
+                <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                  <div className="font-medium text-gray-700 mb-2 flex items-center gap-2">
+                    <FileCheck size={14} />
+                    判定状态
+                  </div>
+                  {needsReview ? (
+                    <div className="space-y-2 text-xs">
+                      {judgment.preliminaryReview && (
+                        <div className="bg-white rounded p-2 border border-gray-200">
+                          <div className="font-semibold text-blue-700 mb-1">初判 · {judgment.preliminaryReview.reviewerName}</div>
+                          <div className="space-y-0.5 text-gray-600">
+                            <div className="flex justify-between">
+                              <span>清晰度/完整性</span>
+                              <span className="font-medium">
+                                {clarityLabels[judgment.preliminaryReview.clarity] || '-'}/{completenessLabels[judgment.preliminaryReview.completeness] || '-'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>结论</span>
+                              <span className={cn(
+                                'font-semibold',
+                                judgment.preliminaryReview.conclusion === 'pass' ? 'text-green-600' : 'text-red-600'
+                              )}>
+                                {judgment.preliminaryReview.conclusion === 'pass' ? '合格' : '不合格'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {judgment.finalReview && (
+                        <div className={cn(
+                          "rounded p-2 border",
+                          judgment.isConsistent ? 'bg-green-50 border-green-200' : 'bg-orange-50 border-orange-200'
+                        )}>
+                          <div className="font-semibold text-purple-700 mb-1 flex items-center gap-1">
+                            复核 · {judgment.finalReview.reviewerName}
+                            {judgment.isConsistent !== null && (
+                              <span className={cn(
+                                "text-xs ml-auto px-1.5 py-0.5 rounded",
+                                judgment.isConsistent ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'
+                              )}>
+                                {judgment.isConsistent ? '一致' : '不一致'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="space-y-0.5 text-gray-600">
+                            <div className="flex justify-between">
+                              <span>清晰度/完整性</span>
+                              <span className="font-medium">
+                                {clarityLabels[judgment.finalReview.clarity] || '-'}/{completenessLabels[judgment.finalReview.completeness] || '-'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>结论</span>
+                              <span className={cn(
+                                'font-semibold',
+                                judgment.finalReview.conclusion === 'pass' ? 'text-green-600' : 'text-red-600'
+                              )}>
+                                {judgment.finalReview.conclusion === 'pass' ? '合格' : '不合格'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {!hasPreliminaryReview && (
+                        <div className="text-center text-gray-400 py-2">尚未开始初判</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">清晰度</span>
+                        <span className="font-medium text-gray-800">
+                          {judgment.clarity ? clarityLabels[judgment.clarity] : '未选择'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">完整性</span>
+                        <span className="font-medium text-gray-800">
+                          {judgment.completeness ? completenessLabels[judgment.completeness] : '未选择'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">缺陷</span>
+                        <span className="font-medium text-gray-800">
+                          {judgment.defects.length > 0 ? `${judgment.defects.length} 项` : '无'}
+                        </span>
+                      </div>
+                      {judgment.conclusion && (
+                        <div className={cn(
+                          'mt-2 pt-2 border-t border-gray-200 flex items-center justify-center gap-1.5 py-1 rounded font-semibold',
+                          judgment.conclusion === 'pass' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                        )}>
+                          {judgment.conclusion === 'pass' ? (
+                            <CheckCircle size={14} />
+                          ) : (
+                            <AlertCircle size={14} />
+                          )}
+                          {judgment.conclusion === 'pass' ? '合格' : '不合格'}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

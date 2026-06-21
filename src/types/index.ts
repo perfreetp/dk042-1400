@@ -76,6 +76,53 @@ export type DefectType = 'stain' | 'shadow' | 'artifact' | 'thickness' | 'positi
 export type Conclusion = 'pass' | 'fail' | '';
 
 /**
+ * 班次类型
+ * - day: 白班 (8:00-18:00)
+ * - night: 夜班 (18:00-次日8:00)
+ */
+export type ShiftType = 'day' | 'night';
+
+/**
+ * 交接备注条目
+ */
+export interface HandoverNote {
+  /** 备注唯一标识 */
+  id: string;
+  /** 备注内容 */
+  content: string;
+  /** 填写人姓名 */
+  authorName: string;
+  /** 创建时间戳 */
+  createdAt: number;
+  /** 是否标记为待确认 */
+  isPending: boolean;
+  /** 确认人姓名 */
+  confirmedByName?: string;
+  /** 确认时间戳 */
+  confirmedAt?: number;
+}
+
+/**
+ * 初判/复核结果
+ */
+export interface ReviewResult {
+  /** 评审人姓名 */
+  reviewerName: string;
+  /** 评审时间戳 */
+  reviewedAt: number;
+  /** 清晰度 */
+  clarity: ClarityLevel | '';
+  /** 完整性 */
+  completeness: CompletenessLevel | '';
+  /** 缺陷类型数组 */
+  defects: DefectType[];
+  /** 退回意见 */
+  rejectionReason: string;
+  /** 评审结论 */
+  conclusion: Conclusion;
+}
+
+/**
  * 评审判断
  */
 export interface Judgment {
@@ -93,6 +140,14 @@ export interface Judgment {
   reviewerName: string;
   /** 评审时间戳 */
   reviewedAt: number;
+  /** 初判结果 */
+  preliminaryReview: ReviewResult | null;
+  /** 复核结果 */
+  finalReview: ReviewResult | null;
+  /** 复核状态：是否需要复核 */
+  needsReview: boolean;
+  /** 初判与复核结论是否一致 */
+  isConsistent: boolean | null;
 }
 
 /**
@@ -148,6 +203,8 @@ export interface Draft {
   currentImageIndex: number;
   /** 评审判断 */
   judgment: Judgment;
+  /** 交接备注列表 */
+  handoverNotes: HandoverNote[];
 }
 
 /**

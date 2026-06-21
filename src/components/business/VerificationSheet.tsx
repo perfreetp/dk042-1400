@@ -303,12 +303,116 @@ export function VerificationSheet({ draft }: VerificationSheetProps) {
           </div>
         )}
 
+        {judgment.needsReview && (judgment.preliminaryReview || judgment.finalReview) && (
+          <div className="mb-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-3 border-b pb-2">
+              复核记录
+            </h2>
+            {judgment.isConsistent !== null && (
+              <div className={`mb-4 p-3 rounded-lg text-center font-semibold ${
+                judgment.isConsistent
+                  ? 'bg-green-50 text-green-700 border border-green-200'
+                  : 'bg-orange-50 text-orange-700 border border-orange-200'
+              }`}>
+                {judgment.isConsistent ? '✓ 初判与复核结论一致' : '⚠ 初判与复核结论不一致'}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-4">
+              {judgment.preliminaryReview && (
+                <div className="border border-blue-200 rounded-lg p-4">
+                  <div className="font-semibold text-blue-700 mb-2 pb-2 border-b border-blue-100">初判</div>
+                  <div className="space-y-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">初判人员</span>
+                      <span className="font-medium">{judgment.preliminaryReview.reviewerName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">清晰度</span>
+                      <span>{clarityLabels[judgment.preliminaryReview.clarity] || '-'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">完整性</span>
+                      <span>{completenessLabels[judgment.preliminaryReview.completeness] || '-'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">结论</span>
+                      <span className={judgment.preliminaryReview.conclusion === 'pass' ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                        {judgment.preliminaryReview.conclusion === 'pass' ? '合格' : '不合格'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">初判时间</span>
+                      <span>{formatDateTime(judgment.preliminaryReview.reviewedAt)}</span>
+                    </div>
+                    {judgment.preliminaryReview.rejectionReason && (
+                      <div className="pt-2 mt-2 border-t border-gray-200">
+                        <div className="text-gray-500 mb-1">初判意见：</div>
+                        <div className="text-gray-700 text-xs leading-relaxed">{judgment.preliminaryReview.rejectionReason}</div>
+                      </div>
+                    )}
+                    <div className="mt-3 pt-2 border-t border-gray-200">
+                      <span className="text-gray-400 text-xs">签字：_______________</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {judgment.finalReview && (
+                <div className="border border-purple-200 rounded-lg p-4">
+                  <div className="font-semibold text-purple-700 mb-2 pb-2 border-b border-purple-100">复核</div>
+                  <div className="space-y-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">复核人员</span>
+                      <span className="font-medium">{judgment.finalReview.reviewerName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">清晰度</span>
+                      <span>{clarityLabels[judgment.finalReview.clarity] || '-'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">完整性</span>
+                      <span>{completenessLabels[judgment.finalReview.completeness] || '-'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">结论</span>
+                      <span className={judgment.finalReview.conclusion === 'pass' ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                        {judgment.finalReview.conclusion === 'pass' ? '合格' : '不合格'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">复核时间</span>
+                      <span>{formatDateTime(judgment.finalReview.reviewedAt)}</span>
+                    </div>
+                    {judgment.finalReview.rejectionReason && (
+                      <div className="pt-2 mt-2 border-t border-gray-200">
+                        <div className="text-gray-500 mb-1">复核意见：</div>
+                        <div className="text-gray-700 text-xs leading-relaxed">{judgment.finalReview.rejectionReason}</div>
+                      </div>
+                    )}
+                    <div className="mt-3 pt-2 border-t border-gray-200">
+                      <span className="text-gray-400 text-xs">签字：_______________</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="mt-12 flex justify-between items-center text-sm">
           <div>
-            <span className="font-medium">审核人员：</span>
-            <span className="ml-1">{judgment.reviewerName || '-'}</span>
-            {judgment.reviewerName && (
-              <span className="ml-4 text-gray-400">（签字：_______________）</span>
+            {judgment.needsReview ? (
+              <>
+                <span className="font-medium">最终审核：</span>
+                <span className="ml-1">{judgment.finalReview?.reviewerName || judgment.preliminaryReview?.reviewerName || '-'}</span>
+              </>
+            ) : (
+              <>
+                <span className="font-medium">审核人员：</span>
+                <span className="ml-1">{judgment.reviewerName || '-'}</span>
+                {judgment.reviewerName && (
+                  <span className="ml-4 text-gray-400">（签字：_______________）</span>
+                )}
+              </>
             )}
           </div>
           <div>

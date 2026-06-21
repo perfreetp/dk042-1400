@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Draft, PatientInfo, ImageData, Mark, MarkType, Judgment, ClarityLevel, CompletenessLevel } from '@/types';
+import type { Draft, PatientInfo, ImageData, Mark, MarkType, Judgment, ClarityLevel, CompletenessLevel, HandoverNote, ReviewResult } from '@/types';
 import { fileToDataUrl, getImageDimensions } from '@/utils/image';
 import { generateId, saveDraft, getDraft } from '@/utils/storage';
 import { getCurrentDateTime } from '@/utils/date';
@@ -34,6 +34,15 @@ interface ReviewActions {
   completeDraft: () => boolean;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   hideToast: () => void;
+  addHandoverNote: (content: string, authorName: string, isPending?: boolean) => void;
+  updateHandoverNote: (noteId: string, updates: Partial<HandoverNote>) => void;
+  removeHandoverNote: (noteId: string) => void;
+  confirmHandoverNote: (noteId: string, confirmerName: string) => void;
+  setPreliminaryReview: (result: ReviewResult) => void;
+  setFinalReview: (result: ReviewResult) => void;
+  clearFinalReview: () => void;
+  getReviewProgress: () => number;
+  setNeedsReview: (needs: boolean) => void;
 }
 
 type ReviewStore = ReviewState & ReviewActions;
@@ -73,6 +82,10 @@ const createEmptyJudgment = (): Judgment => ({
   conclusion: '',
   reviewerName: '',
   reviewedAt: 0,
+  preliminaryReview: null,
+  finalReview: null,
+  needsReview: false,
+  isConsistent: null,
 });
 
 const debouncedAutoSave = (saveFn: () => boolean) => {
@@ -98,6 +111,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       images: [],
       currentImageIndex: 0,
       judgment: createEmptyJudgment(),
+      handoverNotes: [],
     };
     set({ currentDraft: newDraft, currentImageIndex: 0 });
     return newDraft;
@@ -407,21 +421,25 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
         }
       });
 
+      const clarityText = clarityLevel ? clarityLabels[clarityLevel] : '';
+      const completenessText = completenessLevel ? completenessLabels[completenessLevel] : '';
+      const basicDesc = `清晰度${clarityText}，完整性${completenessText}`;
+
       if (clarityLevel === 'clear' && completenessLevel === 'complete' && defectCount === 0 && totalMarks === 0) {
         conclusion = 'pass';
-        rejectionReason = '图像质量良好：清晰度' + clarityLabels[clarityLevel] + '，完整性' + completenessLabels[completenessLevel] + '，无明显缺陷，符合诊断要求。';
+        rejectionReason = `图像质量良好：${basicDesc}，无明显缺陷，符合诊断要求。`;
       } else if (clarityLevel === 'clear' && completenessLevel === 'complete' && defectCount <= 1 && failScore < 2) {
         conclusion = 'pass';
         const defectDesc = defectCount > 0
           ? `，存在轻微问题：${judgment.defects.map(d => defectLabels[d]).join('、')}`
           : '';
-        rejectionReason = `图像质量合格：清晰度${clarityLabels[clarityLevel]}，完整性${clarityLabels[completenessLevel] || ''}${defectDesc}，不影响诊断。`;
+        rejectionReason = `图像质量合格：${basicDesc}${defectDesc}，不影响诊断。`;
       } else if (clarityLevel === 'moderate' && completenessLevel === 'complete' && defectCount <= 1 && failScore < 2) {
         conclusion = 'pass';
         const defectDesc = defectCount > 0
           ? `，存在${judgment.defects.map(d => defectLabels[d]).join('、')}`
           : '';
-        rejectionReason = `图像质量基本合格：清晰度${clarityLabels[clarityLevel]}，完整性${completenessLabels[completenessLevel]}${defectDesc}，虽然清晰度一般但不影响诊断。`;
+        rejectionReason = `图像质量基本合格：${basicDesc}${defectDesc}，虽然清晰度一般但不影响诊断。`;
       } else if (clarityLevel === 'moderate' && completenessLevel === 'partial' && failScore < 3) {
         conclusion = 'fail';
         reasons.unshift('清晰度一般且检查部位不完整');
@@ -431,14 +449,17 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       } else if (clarityLevel && completenessLevel) {
         conclusion = defectCount >= 2 ? 'fail' : 'pass';
         if (conclusion === 'pass') {
-          rejectionReason = `图像质量合格：清晰度${clarityLabels[clarityLevel]}，完整性${completenessLabels[completenessLevel]}。`;
+          const defectDesc = defectCount > 0
+            ? `，存在轻微问题：${judgment.defects.map(d => defectLabels[d]).join('、')}`
+            : '';
+          rejectionReason = `图像质量合格：${basicDesc}${defectDesc}，符合诊断要求。`;
         }
       }
 
       if (conclusion === 'fail' && rejectionReason === '') {
         const reasonText = reasons.length > 0 ? reasons.join('；') : '图像质量不符合标准';
         const suggestionText = suggestions.length > 0 ? `。建议：${suggestions.join('；')}` : '';
-        rejectionReason = `${reasonText}${suggestionText}，建议重拍。`;
+        rejectionReason = `${basicDesc}，${reasonText}${suggestionText}，建议重拍。`;
       }
 
       if (!clarityLevel || !completenessLevel) {
@@ -518,6 +539,197 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       get().showToast('完成核查失败', 'error');
       return false;
     }
+  },
+
+  addHandoverNote: (content, authorName, isPending = true) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const newNote: HandoverNote = {
+        id: generateId(),
+        content,
+        authorName,
+        createdAt: Date.now(),
+        isPending,
+      };
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        handoverNotes: [...state.currentDraft.handoverNotes, newNote],
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  updateHandoverNote: (noteId, updates) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const handoverNotes = state.currentDraft.handoverNotes.map((note) =>
+        note.id === noteId ? { ...note, ...updates } : note
+      );
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        handoverNotes,
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  removeHandoverNote: (noteId) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const handoverNotes = state.currentDraft.handoverNotes.filter(
+        (note) => note.id !== noteId
+      );
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        handoverNotes,
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  confirmHandoverNote: (noteId, confirmerName) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const handoverNotes = state.currentDraft.handoverNotes.map((note) =>
+        note.id === noteId
+          ? {
+              ...note,
+              isPending: false,
+              confirmedByName: confirmerName,
+              confirmedAt: Date.now(),
+            }
+          : note
+      );
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        handoverNotes,
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  setPreliminaryReview: (result) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        judgment: {
+          ...state.currentDraft.judgment,
+          preliminaryReview: result,
+          clarity: result.clarity,
+          completeness: result.completeness,
+          defects: result.defects,
+          rejectionReason: result.rejectionReason,
+          conclusion: result.conclusion,
+          reviewerName: result.reviewerName,
+          reviewedAt: result.reviewedAt,
+        },
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  setFinalReview: (result) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const isConsistent = state.currentDraft.judgment.preliminaryReview
+        ? state.currentDraft.judgment.preliminaryReview.conclusion === result.conclusion
+        : null;
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        judgment: {
+          ...state.currentDraft.judgment,
+          finalReview: result,
+          clarity: result.clarity,
+          completeness: result.completeness,
+          defects: result.defects,
+          rejectionReason: result.rejectionReason,
+          conclusion: result.conclusion,
+          reviewerName: result.reviewerName,
+          reviewedAt: result.reviewedAt,
+          isConsistent,
+        },
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  clearFinalReview: () => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const preliminary = state.currentDraft.judgment.preliminaryReview;
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        judgment: {
+          ...state.currentDraft.judgment,
+          finalReview: null,
+          isConsistent: null,
+          clarity: preliminary?.clarity || '',
+          completeness: preliminary?.completeness || '',
+          defects: preliminary?.defects || [],
+          rejectionReason: preliminary?.rejectionReason || '',
+          conclusion: preliminary?.conclusion || '',
+          reviewerName: preliminary?.reviewerName || '',
+          reviewedAt: preliminary?.reviewedAt || 0,
+        },
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  getReviewProgress: () => {
+    const { currentDraft } = get();
+    if (!currentDraft) return 0;
+
+    const { patientInfo, images, judgment } = currentDraft;
+    let totalSteps = 4;
+    let completedSteps = 0;
+
+    if (patientInfo.studyNo && patientInfo.name) {
+      completedSteps++;
+    }
+
+    if (images.length > 0) {
+      completedSteps++;
+    }
+
+    completedSteps++;
+
+    if (judgment.clarity && judgment.completeness && judgment.conclusion) {
+      completedSteps++;
+    }
+
+    return Math.round((completedSteps / totalSteps) * 100);
+  },
+
+  setNeedsReview: (needs) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        judgment: {
+          ...state.currentDraft.judgment,
+          needsReview: needs,
+        },
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
   },
 
   showToast: (message, type = 'info') => {

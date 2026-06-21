@@ -5,6 +5,7 @@ import { ImageViewer } from '@/components/business/ImageViewer';
 import { PatientForm } from '@/components/business/PatientForm';
 import { DropZone } from '@/components/business/DropZone';
 import { ProgressSidebar } from '@/components/business/ProgressSidebar';
+import { HandoverNotes } from '@/components/business/HandoverNotes';
 import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Toast } from '@/components/common/Toast';
@@ -236,6 +237,8 @@ export function ViewerPage() {
           </div>
         </div>
       </Card>
+
+      <HandoverNotes notes={currentDraft.handoverNotes || []} draftId={currentDraft.id} />
 
       <Toast
         message={toast.message}

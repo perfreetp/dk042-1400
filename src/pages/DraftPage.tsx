@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDraftStore } from '@/store/useDraftStore';
 import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Toast } from '@/components/common/Toast';
 import { formatDateTime, formatDate } from '@/utils/date';
-import type { Draft, DraftStatus, Conclusion } from '@/types';
+import type { Draft, DraftStatus, Conclusion, ShiftType } from '@/types';
 import {
   FileText,
   Trash2,
@@ -23,10 +23,27 @@ import {
   Square,
   X,
   ChevronDown,
+  Sun,
+  Moon,
+  BarChart3,
 } from 'lucide-react';
 
 type ConclusionFilter = 'all' | Conclusion;
 type MarkFilter = 'all' | 'has_mark' | 'no_mark';
+type ShiftFilter = 'all' | ShiftType;
+
+const getShiftType = (timestamp: number): ShiftType => {
+  const hour = new Date(timestamp).getHours();
+  return hour >= 8 && hour < 18 ? 'day' : 'night';
+};
+
+const isToday = (timestamp: number): boolean => {
+  const today = new Date();
+  const date = new Date(timestamp);
+  return today.getFullYear() === date.getFullYear() &&
+         today.getMonth() === date.getMonth() &&
+         today.getDate() === date.getDate();
+};
 
 interface DraftExportRow {
   studyNo: string;
@@ -82,11 +99,13 @@ export function DraftPage() {
   const [statusFilter, setStatusFilter] = useState<DraftStatus | 'all'>('all');
   const [conclusionFilter, setConclusionFilter] = useState<ConclusionFilter>('all');
   const [markFilter, setMarkFilter] = useState<MarkFilter>('all');
+  const [shiftFilter, setShiftFilter] = useState<ShiftFilter>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showFilters, setShowFilters] = useState(true);
+  const [showShiftSummary, setShowShiftSummary] = useState(true);
   const [toast, setToast] = useState({ message: '', type: 'info' as 'success' | 'error' | 'info', visible: false });
 
   useEffect(() => {
@@ -95,11 +114,44 @@ export function DraftPage() {
 
   const hasMarks = (draft: Draft) => draft.images.some(img => img.marks.length > 0);
 
+  const shiftSummary = useMemo(() => {
+    const todayDrafts = drafts.filter(d => isToday(d.createdAt) || isToday(d.updatedAt));
+
+    const dayShift = todayDrafts.filter(d => {
+      const time = d.updatedAt || d.createdAt;
+      return isToday(time) && getShiftType(time) === 'day';
+    });
+
+    const nightShift = todayDrafts.filter(d => {
+      const time = d.updatedAt || d.createdAt;
+      return isToday(time) && getShiftType(time) === 'night';
+    });
+
+    const getShiftStats = (shiftDrafts: Draft[]) => ({
+      total: shiftDrafts.length,
+      completed: shiftDrafts.filter(d => d.status === 'completed').length,
+      incomplete: shiftDrafts.filter(d => d.status === 'incomplete').length,
+      pass: shiftDrafts.filter(d => d.judgment.conclusion === 'pass').length,
+      fail: shiftDrafts.filter(d => d.judgment.conclusion === 'fail').length,
+    });
+
+    return {
+      day: getShiftStats(dayShift),
+      night: getShiftStats(nightShift),
+    };
+  }, [drafts]);
+
   const filteredDrafts = drafts.filter((draft) => {
     if (statusFilter !== 'all' && draft.status !== statusFilter) return false;
     if (conclusionFilter !== 'all' && draft.judgment.conclusion !== conclusionFilter) return false;
     if (markFilter === 'has_mark' && !hasMarks(draft)) return false;
     if (markFilter === 'no_mark' && hasMarks(draft)) return false;
+
+    if (shiftFilter !== 'all') {
+      const time = draft.updatedAt || draft.createdAt;
+      if (!isToday(time)) return false;
+      if (getShiftType(time) !== shiftFilter) return false;
+    }
 
     if (dateFrom) {
       const draftDate = draft.patientInfo.studyDate || new Date(draft.createdAt).toISOString().split('T')[0];
@@ -276,9 +328,26 @@ export function DraftPage() {
     setStatusFilter('all');
     setConclusionFilter('all');
     setMarkFilter('all');
+    setShiftFilter('all');
     setDateFrom('');
     setDateTo('');
     setSearchTerm('');
+  };
+
+  const handleExportShift = (shift: ShiftType) => {
+    const today = new Date();
+    const shiftDrafts = drafts.filter(d => {
+      const time = d.updatedAt || d.createdAt;
+      if (!isToday(time)) return false;
+      if (getShiftType(time) !== shift) return false;
+      return d.status === 'completed';
+    });
+    const shiftName = shift === 'day' ? '白班' : '夜班';
+    exportToCSV(shiftDrafts, `今日${shiftName}质控汇总`);
+  };
+
+  const handleFilterByShift = (shift: ShiftFilter) => {
+    setShiftFilter(shift);
   };
 
   const handleContinue = (draftId: string) => {
@@ -325,6 +394,7 @@ export function DraftPage() {
     statusFilter !== 'all',
     conclusionFilter !== 'all',
     markFilter !== 'all',
+    shiftFilter !== 'all',
     !!dateFrom,
     !!dateTo,
   ].filter(Boolean).length;
@@ -359,6 +429,142 @@ export function DraftPage() {
         </div>
       </div>
 
+      <Card className="overflow-hidden">
+        <div
+          className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-medical-50 to-blue-50 cursor-pointer hover:from-medical-100 hover:to-blue-100 transition-colors"
+          onClick={() => setShowShiftSummary(!showShiftSummary)}
+        >
+          <div className="flex items-center gap-3">
+            <BarChart3 size={20} className="text-medical-600" />
+            <span className="font-semibold text-medical-800">今日班次汇总</span>
+            <span className="text-xs text-gray-500">
+              {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
+            </span>
+          </div>
+          <ChevronDown size={18} className={`text-gray-500 transition-transform ${showShiftSummary ? 'rotate-180' : ''}`} />
+        </div>
+
+        {showShiftSummary && (
+          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className={`rounded-xl border-2 p-4 transition-all cursor-pointer ${
+              shiftFilter === 'day' ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white hover:border-amber-300'
+            }`}
+            onClick={() => handleFilterByShift(shiftFilter === 'day' ? 'all' : 'day')}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                    <Sun size={20} className="text-amber-600" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-gray-800">白班</div>
+                    <div className="text-xs text-gray-500">08:00 - 18:00</div>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant={shiftSummary.day.completed > 0 ? 'success' : 'outline'}
+                  onClick={(e) => { e.stopPropagation(); handleExportShift('day'); }}
+                  disabled={shiftSummary.day.completed === 0}
+                >
+                  <Download size={14} className="mr-1" />
+                  导出汇总
+                </Button>
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <div className="text-xl font-bold text-gray-800">{shiftSummary.day.total}</div>
+                  <div className="text-xs text-gray-500">总计</div>
+                </div>
+                <div className="bg-green-50 rounded-lg p-2">
+                  <div className="text-xl font-bold text-green-600">{shiftSummary.day.completed}</div>
+                  <div className="text-xs text-gray-500">已完成</div>
+                </div>
+                <div className="bg-yellow-50 rounded-lg p-2">
+                  <div className="text-xl font-bold text-yellow-600">{shiftSummary.day.incomplete}</div>
+                  <div className="text-xs text-gray-500">未完成</div>
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  <div className="bg-green-50 rounded-lg p-1.5">
+                    <div className="text-sm font-bold text-green-600">{shiftSummary.day.pass}</div>
+                    <div className="text-[10px] text-gray-500">合格</div>
+                  </div>
+                  <div className="bg-red-50 rounded-lg p-1.5">
+                    <div className="text-sm font-bold text-red-600">{shiftSummary.day.fail}</div>
+                    <div className="text-[10px] text-gray-500">不合格</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className={`rounded-xl border-2 p-4 transition-all cursor-pointer ${
+              shiftFilter === 'night' ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white hover:border-indigo-300'
+            }`}
+            onClick={() => handleFilterByShift(shiftFilter === 'night' ? 'all' : 'night')}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
+                    <Moon size={20} className="text-indigo-600" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-gray-800">夜班</div>
+                    <div className="text-xs text-gray-500">18:00 - 次日08:00</div>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant={shiftSummary.night.completed > 0 ? 'success' : 'outline'}
+                  onClick={(e) => { e.stopPropagation(); handleExportShift('night'); }}
+                  disabled={shiftSummary.night.completed === 0}
+                >
+                  <Download size={14} className="mr-1" />
+                  导出汇总
+                </Button>
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <div className="text-xl font-bold text-gray-800">{shiftSummary.night.total}</div>
+                  <div className="text-xs text-gray-500">总计</div>
+                </div>
+                <div className="bg-green-50 rounded-lg p-2">
+                  <div className="text-xl font-bold text-green-600">{shiftSummary.night.completed}</div>
+                  <div className="text-xs text-gray-500">已完成</div>
+                </div>
+                <div className="bg-yellow-50 rounded-lg p-2">
+                  <div className="text-xl font-bold text-yellow-600">{shiftSummary.night.incomplete}</div>
+                  <div className="text-xs text-gray-500">未完成</div>
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  <div className="bg-green-50 rounded-lg p-1.5">
+                    <div className="text-sm font-bold text-green-600">{shiftSummary.night.pass}</div>
+                    <div className="text-[10px] text-gray-500">合格</div>
+                  </div>
+                  <div className="bg-red-50 rounded-lg p-1.5">
+                    <div className="text-sm font-bold text-red-600">{shiftSummary.night.fail}</div>
+                    <div className="text-[10px] text-gray-500">不合格</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {shiftFilter !== 'all' && (
+        <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-2">
+          <div className="flex items-center gap-2 text-blue-700">
+            {shiftFilter === 'day' ? <Sun size={16} /> : <Moon size={16} />}
+            <span className="text-sm font-medium">
+              当前筛选：今日{shiftFilter === 'day' ? '白班' : '夜班'} · 显示 {filteredDrafts.length} 条
+            </span>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setShiftFilter('all')}>
+            清除筛选
+          </Button>
+        </div>
+      )}
+
       <Card>
         <div className="space-y-4">
           <div className="flex gap-4 items-center justify-between">
@@ -390,7 +596,7 @@ export function DraftPage() {
           </div>
 
           {showFilters && (
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 pt-4 border-t border-gray-100">
+            <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 pt-4 border-t border-gray-100">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">核查状态</label>
                 <select
@@ -426,6 +632,21 @@ export function DraftPage() {
                   <option value="all">全部</option>
                   <option value="has_mark">有标记</option>
                   <option value="no_mark">无标记</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5 flex items-center gap-1">
+                  <Sun size={14} />
+                  今日班次
+                </label>
+                <select
+                  value={shiftFilter}
+                  onChange={(e) => setShiftFilter(e.target.value as ShiftFilter)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-500 focus:border-transparent bg-white text-sm"
+                >
+                  <option value="all">全部班次</option>
+                  <option value="day">白班 (08:00-18:00)</option>
+                  <option value="night">夜班 (18:00-08:00)</option>
                 </select>
               </div>
               <div>
@@ -473,12 +694,12 @@ export function DraftPage() {
           </div>
           <h3 className="text-lg font-medium text-gray-700 mb-2">暂无草稿</h3>
           <p className="text-gray-500 mb-4">
-            {searchTerm || statusFilter !== 'all' || conclusionFilter !== 'all' || markFilter !== 'all' || dateFrom || dateTo
+            {searchTerm || statusFilter !== 'all' || conclusionFilter !== 'all' || markFilter !== 'all' || shiftFilter !== 'all' || dateFrom || dateTo
               ? '没有找到符合条件的草稿，请调整筛选条件'
               : '开始新建第一份核查吧'}
           </p>
           <div className="flex justify-center gap-2">
-            {(searchTerm || statusFilter !== 'all' || conclusionFilter !== 'all' || markFilter !== 'all' || dateFrom || dateTo) && (
+            {(searchTerm || statusFilter !== 'all' || conclusionFilter !== 'all' || markFilter !== 'all' || shiftFilter !== 'all' || dateFrom || dateTo) && (
               <Button variant="secondary" onClick={handleResetFilters}>
                 清除筛选
               </Button>
