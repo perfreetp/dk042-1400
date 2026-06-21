@@ -1,7 +1,8 @@
-import type { Draft } from '@/types';
+import type { Draft, HandoverConfirmation } from '@/types';
 import { STORAGE_KEYS } from '@/types';
 
 const DRAFTS_KEY = STORAGE_KEYS.DRAFTS;
+const HANDOVER_KEY = STORAGE_KEYS.HANDOVER_CONFIRMATIONS;
 
 export function getDrafts(): Draft[] {
   try {
@@ -50,4 +51,24 @@ export function clearOldDrafts(days: number = 30): number {
   const removedCount = drafts.length - filtered.length;
   saveDrafts(filtered);
   return removedCount;
+}
+
+export function getHandoverConfirmations(): HandoverConfirmation[] {
+  try {
+    const data = localStorage.getItem(HANDOVER_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveHandoverConfirmation(confirmation: HandoverConfirmation): void {
+  const confirmations = getHandoverConfirmations();
+  confirmations.unshift(confirmation);
+  localStorage.setItem(HANDOVER_KEY, JSON.stringify(confirmations));
+}
+
+export function getHandoverConfirmationForShift(shift: string, date: string): HandoverConfirmation | undefined {
+  const confirmations = getHandoverConfirmations();
+  return confirmations.find(c => c.shift === shift && c.handoverDate === date);
 }

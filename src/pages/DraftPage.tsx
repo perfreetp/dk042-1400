@@ -227,6 +227,10 @@ interface DraftExportRow {
   status: string;
   nextStep: string;
   pendingNotes: string;
+  operationSummary: string;
+  handoverReceiver: string;
+  handoverTime: string;
+  handoverRemarks: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -258,7 +262,7 @@ const genderLabels: Record<string, string> = {
 
 export function DraftPage() {
   const navigate = useNavigate();
-  const { drafts, loadDrafts, deleteDraft, clearOldDrafts, getDraftCount, getIncompleteCount, getPendingReviewCount } = useDraftStore();
+  const { drafts, loadDrafts, deleteDraft, clearOldDrafts, getDraftCount, getIncompleteCount, getPendingReviewCount, loadHandoverConfirmations, addHandoverConfirmation, getHandoverForShift } = useDraftStore();
 
   const [statusFilter, setStatusFilter] = useState<DraftStatus | 'all'>('all');
   const [conclusionFilter, setConclusionFilter] = useState<ConclusionFilter>('all');
@@ -273,9 +277,15 @@ export function DraftPage() {
   const [activeShiftDetail, setActiveShiftDetail] = useState<ShiftType | null>(null);
   const [toast, setToast] = useState({ message: '', type: 'info' as 'success' | 'error' | 'info', visible: false });
 
+  const [handoverConfirmMode, setHandoverConfirmMode] = useState<ShiftType | null>(null);
+  const [receiverName, setReceiverName] = useState('');
+  const [handoverConfirmIds, setHandoverConfirmIds] = useState<Set<string>>(new Set());
+  const [handoverRemarks, setHandoverRemarks] = useState('');
+
   useEffect(() => {
     loadDrafts();
-  }, [loadDrafts]);
+    loadHandoverConfirmations();
+  }, [loadDrafts, loadHandoverConfirmations]);
 
   const hasMarks = (draft: Draft) => draft.images.some(img => img.marks.length > 0);
 
@@ -408,9 +418,27 @@ export function DraftPage() {
     });
   };
 
-  const draftToExportRow = (draft: Draft): DraftExportRow => {
+  const draftToExportRow = (draft: Draft, handoverConfirmation?: { receiverName: string; receivedAt: number; remarks?: string } | null): DraftExportRow => {
     const markCount = draft.images.reduce((sum, img) => sum + img.marks.length, 0);
     const pendingNoteCount = (draft.handoverNotes || []).filter(n => n.isPending).length;
+
+    const opLogs = draft.operationLogs || [];
+    const opSummary = opLogs.length > 0
+      ? opLogs.slice(0, 5).map(log => {
+          const typeMap: Record<string, string> = {
+            preliminary_save: '初判',
+            final_save: '复核',
+            decision_save: '裁定',
+            note_add: '加备注',
+            note_confirm: '确认备注',
+            handover_confirm: '交接',
+            status_change: '状态',
+          };
+          const typeLabel = typeMap[log.type] || log.type;
+          return `${typeLabel}(${log.operatorName})`;
+        }).join(' → ') + (opLogs.length > 5 ? ` 等${opLogs.length}步` : '')
+      : '';
+
     return {
       studyNo: draft.patientInfo.studyNo,
       patientName: draft.patientInfo.name,
@@ -431,24 +459,30 @@ export function DraftPage() {
       status: getStatusText(draft),
       nextStep: getNextStep(draft),
       pendingNotes: pendingNoteCount > 0 ? `${pendingNoteCount}条待确认` : '',
+      operationSummary: opSummary,
+      handoverReceiver: handoverConfirmation?.receiverName || '',
+      handoverTime: handoverConfirmation?.receivedAt ? formatDateTime(handoverConfirmation.receivedAt) : '',
+      handoverRemarks: handoverConfirmation?.remarks || '',
       createdAt: formatDateTime(draft.createdAt),
       updatedAt: formatDateTime(draft.updatedAt),
     };
   };
 
-  const exportToCSV = (draftsToExport: Draft[], filename: string) => {
+  const exportToCSV = (draftsToExport: Draft[], filename: string, handoverConfirmation?: { receiverName: string; receivedAt: number; remarks?: string } | null) => {
     if (draftsToExport.length === 0) {
       showToast('没有可导出的数据', 'error');
       return;
     }
 
-    const rows = draftsToExport.map(draftToExportRow);
+    const rows = draftsToExport.map(d => draftToExportRow(d, handoverConfirmation));
     const headers: (keyof DraftExportRow)[] = [
       'status', 'nextStep', 'pendingNotes',
       'studyNo', 'patientName', 'gender', 'age', 'bodyPart', 'studyDate',
       'imageCount', 'markCount', 'clarity', 'completeness',
       'defectCount', 'defects', 'conclusion', 'rejectionReason',
-      'reviewerName', 'reviewedAt', 'createdAt', 'updatedAt'
+      'reviewerName', 'reviewedAt', 'operationSummary',
+      'handoverReceiver', 'handoverTime', 'handoverRemarks',
+      'createdAt', 'updatedAt'
     ];
     const headerLabels: Record<keyof DraftExportRow, string> = {
       studyNo: '检查号',
@@ -470,6 +504,10 @@ export function DraftPage() {
       status: '核查状态',
       nextStep: '下一步提示',
       pendingNotes: '交接备注',
+      operationSummary: '操作链路',
+      handoverReceiver: '接班人',
+      handoverTime: '接收时间',
+      handoverRemarks: '交接说明',
       createdAt: '创建时间',
       updatedAt: '更新时间',
     };
@@ -560,7 +598,72 @@ export function DraftPage() {
       return true;
     });
     const shiftName = shift === 'day' ? '白班' : '夜班';
-    exportToCSV(shiftDrafts, `今日${shiftName}交班汇总表`);
+    const handoverConfirmation = getHandoverForShift(shift, getTodayDateStr());
+    exportToCSV(shiftDrafts, `今日${shiftName}交班汇总表`, handoverConfirmation);
+  };
+
+  const getTodayDateStr = (): string => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  };
+
+  const startHandoverConfirm = (shift: ShiftType) => {
+    const stats = shift === 'day' ? shiftSummary.day : shiftSummary.night;
+    const unclosedDrafts = [...stats.pendingReviewList, ...stats.incompleteList, ...stats.pendingNoteList];
+    const draftIds = new Set(unclosedDrafts.map(d => d.id));
+    setHandoverConfirmIds(draftIds);
+    setHandoverConfirmMode(shift);
+    setActiveShiftDetail(shift);
+    setReceiverName('');
+    setHandoverRemarks('');
+  };
+
+  const toggleHandoverDraft = (draftId: string) => {
+    setHandoverConfirmIds(prev => {
+      const next = new Set(prev);
+      if (next.has(draftId)) {
+        next.delete(draftId);
+      } else {
+        next.add(draftId);
+      }
+      return next;
+    });
+  };
+
+  const toggleHandoverSelectAll = (shift: ShiftType) => {
+    const stats = shift === 'day' ? shiftSummary.day : shiftSummary.night;
+    const unclosedDrafts = [...stats.pendingReviewList, ...stats.incompleteList, ...stats.pendingNoteList];
+    if (handoverConfirmIds.size === unclosedDrafts.length) {
+      setHandoverConfirmIds(new Set());
+    } else {
+      setHandoverConfirmIds(new Set(unclosedDrafts.map(d => d.id)));
+    }
+  };
+
+  const submitHandoverConfirm = (shift: ShiftType) => {
+    if (handoverConfirmIds.size === 0) {
+      showToast('请至少选择一项交接内容', 'error');
+      return;
+    }
+    if (!receiverName.trim()) {
+      showToast('请输入接班人姓名', 'error');
+      return;
+    }
+
+    addHandoverConfirmation({
+      shift,
+      handoverDate: getTodayDateStr(),
+      receiverName: receiverName.trim(),
+      confirmedDraftIds: Array.from(handoverConfirmIds),
+      remarks: handoverRemarks.trim() || undefined,
+    });
+
+    showToast(`交接确认已保存，接班人：${receiverName.trim()}`, 'success');
+    setHandoverConfirmMode(null);
+    setHandoverConfirmIds(new Set());
+    setReceiverName('');
+    setHandoverRemarks('');
+    loadHandoverConfirmations();
   };
 
   const handleFilterByShift = (shift: ShiftFilter) => {
@@ -694,6 +797,15 @@ export function DraftPage() {
                   <div className="flex items-center gap-2">
                     <Button
                       size="sm"
+                      variant={handoverConfirmMode === 'day' ? 'warning' : shiftSummary.day.total > 0 ? 'success' : 'outline'}
+                      onClick={(e) => { e.stopPropagation(); handoverConfirmMode === 'day' ? setHandoverConfirmMode(null) : startHandoverConfirm('day'); }}
+                      disabled={shiftSummary.day.pendingReview + shiftSummary.day.incomplete + shiftSummary.day.pendingNotes === 0}
+                    >
+                      <Users size={14} className="mr-1" />
+                      {handoverConfirmMode === 'day' ? '取消确认' : '交接确认'}
+                    </Button>
+                    <Button
+                      size="sm"
                       variant={shiftSummary.day.total > 0 ? 'success' : 'outline'}
                       onClick={(e) => { e.stopPropagation(); handleExportShift('day'); }}
                       disabled={shiftSummary.day.total === 0}
@@ -765,6 +877,15 @@ export function DraftPage() {
                   <div className="flex items-center gap-2">
                     <Button
                       size="sm"
+                      variant={handoverConfirmMode === 'night' ? 'warning' : shiftSummary.night.total > 0 ? 'success' : 'outline'}
+                      onClick={(e) => { e.stopPropagation(); handoverConfirmMode === 'night' ? setHandoverConfirmMode(null) : startHandoverConfirm('night'); }}
+                      disabled={shiftSummary.night.pendingReview + shiftSummary.night.incomplete + shiftSummary.night.pendingNotes === 0}
+                    >
+                      <Users size={14} className="mr-1" />
+                      {handoverConfirmMode === 'night' ? '取消确认' : '交接确认'}
+                    </Button>
+                    <Button
+                      size="sm"
                       variant={shiftSummary.night.total > 0 ? 'success' : 'outline'}
                       onClick={(e) => { e.stopPropagation(); handleExportShift('night'); }}
                       disabled={shiftSummary.night.total === 0}
@@ -827,6 +948,186 @@ export function DraftPage() {
                   getStatusText={getStatusText}
                   onOpenDraft={(id) => navigate(`/viewer/${id}`)}
                 />
+
+                {handoverConfirmMode === activeShiftDetail && (() => {
+                  const shift = activeShiftDetail;
+                  const stats = shift === 'day' ? shiftSummary.day : shiftSummary.night;
+                  const allUnclosed = [
+                    ...stats.pendingReviewList,
+                    ...stats.incompleteList,
+                    ...stats.pendingNoteList.filter(d =>
+                      !stats.pendingReviewList.some(p => p.id === d.id) &&
+                      !stats.incompleteList.some(i => i.id === d.id)
+                    ),
+                  ];
+                  const allSelected = allUnclosed.length > 0 && handoverConfirmIds.size === allUnclosed.length;
+                  const shiftName = shift === 'day' ? '白班' : '夜班';
+
+                  return (
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
+                            <Users size={16} className="text-white" />
+                          </div>
+                          <div>
+                            <div className="font-semibold text-gray-800">交接确认 · {shiftName}</div>
+                            <div className="text-xs text-gray-500">勾选已接收的项目，填写接班人信息后确认</div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleHandoverSelectAll(shift); }}
+                          className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                        >
+                          {allSelected ? <CheckSquare size={14} className="text-blue-600" /> : <Square size={14} />}
+                          {allSelected ? '取消全选' : '全选待办'}
+                        </button>
+                      </div>
+
+                      <div className="max-h-64 overflow-y-auto space-y-2 mb-4">
+                        {allUnclosed.length === 0 ? (
+                          <div className="text-center text-gray-400 py-6 text-sm">
+                            ✓ 本班次无待交接项目
+                          </div>
+                        ) : (
+                          allUnclosed.map(draft => {
+                            const isChecked = handoverConfirmIds.has(draft.id);
+                            const badge = draft.status === 'pending_review' ? 'bg-orange-100 text-orange-700' :
+                              draft.status === 'incomplete' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700';
+                            const statusText = draft.status === 'pending_review' ? '待复核' :
+                              draft.status === 'incomplete' ? '未完成' : '待确认备注';
+                            const nextStep = getNextStep(draft);
+                            return (
+                              <div
+                                key={draft.id}
+                                onClick={(e) => { e.stopPropagation(); toggleHandoverDraft(draft.id); }}
+                                className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                                  isChecked ? 'bg-blue-100 border border-blue-300' : 'bg-white border border-gray-200 hover:border-blue-200'
+                                }`}
+                              >
+                                <div className="mt-0.5">
+                                  {isChecked ?
+                                    <CheckSquare size={18} className="text-blue-600" /> :
+                                    <Square size={18} className="text-gray-400" />
+                                  }
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-medium text-gray-800">
+                                      {draft.patientInfo.name || '未命名患者'}
+                                    </span>
+                                    <span className="text-gray-400 text-xs">
+                                      ({draft.patientInfo.studyNo || '无检查号'})
+                                    </span>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full ${badge}`}>
+                                      {statusText}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    下一步：{nextStep}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            接班人姓名 <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={receiverName}
+                            onChange={(e) => setReceiverName(e.target.value)}
+                            placeholder="请输入接班人姓名"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            交接备注
+                          </label>
+                          <input
+                            type="text"
+                            value={handoverRemarks}
+                            onChange={(e) => setHandoverRemarks(e.target.value)}
+                            placeholder="其他需要说明的事项（选填）"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-gray-500">
+                          已选 {handoverConfirmIds.size} / {allUnclosed.length} 项
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => { e.stopPropagation(); setHandoverConfirmMode(null); }}
+                          >
+                            取消
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={(e) => { e.stopPropagation(); submitHandoverConfirm(shift); }}
+                            disabled={handoverConfirmIds.size === 0 || !receiverName.trim()}
+                          >
+                            <CheckCircle size={14} className="mr-1.5" />
+                            确认交接
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {(() => {
+                  const shift = activeShiftDetail;
+                  const confirmation = getHandoverForShift(shift, getTodayDateStr());
+                  if (!confirmation) return null;
+
+                  return (
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center">
+                          <CheckCircle size={14} className="text-white" />
+                        </div>
+                        <span className="font-semibold text-green-800">
+                          本班次交接已确认
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                        <div>
+                          <span className="text-gray-500">接班人：</span>
+                          <span className="font-medium text-gray-800">{confirmation.receiverName}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">接收时间：</span>
+                          <span className="font-medium text-gray-800">{new Date(confirmation.receivedAt).toLocaleString('zh-CN')}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">已确认项：</span>
+                          <span className="font-medium text-gray-800">{confirmation.confirmedDraftIds.length} 项</span>
+                        </div>
+                        {confirmation.remarks && (
+                          <div className="col-span-2 md:col-span-1">
+                            <span className="text-gray-500">备注：</span>
+                            <span className="font-medium text-gray-800">{confirmation.remarks}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>

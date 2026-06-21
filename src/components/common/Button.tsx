@@ -2,7 +2,7 @@ import { Loader2 } from 'lucide-react'
 import { ButtonHTMLAttributes, forwardRef, ElementType, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
-type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'success' | 'outline'
+type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'success' | 'outline' | 'warning'
 type ButtonSize = 'sm' | 'md' | 'lg'
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -21,6 +21,7 @@ const variantStyles: Record<ButtonVariant, string> = {
   secondary: 'bg-gray-100 text-gray-700 hover:bg-gray-200 active:bg-gray-300 border border-gray-200',
   danger: 'bg-red-500 text-white hover:bg-red-600 active:bg-red-700',
   success: 'bg-green-500 text-white hover:bg-green-600 active:bg-green-700',
+  warning: 'bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700',
   outline: 'border-2 border-medical-600 text-medical-600 hover:bg-medical-50 active:bg-medical-100 bg-transparent',
 }
 
@@ -55,6 +56,7 @@ const Button = forwardRef<HTMLElement, ButtonProps>(
       variant === 'secondary' && 'focus:ring-gray-400',
       variant === 'danger' && 'focus:ring-red-400',
       variant === 'success' && 'focus:ring-green-400',
+      variant === 'warning' && 'focus:ring-orange-400',
       variant === 'outline' && 'focus:ring-medical-500',
       className
     );

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Draft, PatientInfo, ImageData, Mark, MarkType, Judgment, ClarityLevel, CompletenessLevel, HandoverNote, ReviewResult, FinalDecision } from '@/types';
+import type { Draft, PatientInfo, ImageData, Mark, MarkType, Judgment, ClarityLevel, CompletenessLevel, HandoverNote, ReviewResult, FinalDecision, OperationLogEntry, OperationType } from '@/types';
 import { fileToDataUrl, getImageDimensions } from '@/utils/image';
 import { generateId, saveDraft, getDraft } from '@/utils/storage';
 import { getCurrentDateTime } from '@/utils/date';
@@ -45,6 +45,7 @@ interface ReviewActions {
   setNeedsReview: (needs: boolean) => void;
   setFinalDecision: (decision: FinalDecision) => void;
   clearFinalDecision: () => void;
+  addOperationLog: (type: OperationType, operatorName: string, description: string, toStatus?: Draft['status']) => void;
 }
 
 type ReviewStore = ReviewState & ReviewActions;
@@ -106,6 +107,7 @@ const migrateDraft = (draft: any): Draft => {
     ...draft,
     status: draft.status === 'completed' ? 'completed' : (draft.status === 'pending_review' ? 'pending_review' : 'incomplete'),
     handoverNotes: Array.isArray(draft.handoverNotes) ? draft.handoverNotes : [],
+    operationLogs: Array.isArray(draft.operationLogs) ? draft.operationLogs : [],
     judgment: {
       ...createEmptyJudgment(),
       ...j,
@@ -134,6 +136,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       currentImageIndex: 0,
       judgment: createEmptyJudgment(),
       handoverNotes: [],
+      operationLogs: [],
     };
     set({ currentDraft: newDraft, currentImageIndex: 0 });
     return newDraft;
@@ -611,9 +614,20 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
         createdAt: Date.now(),
         isPending,
       };
+
+      const logs = state.currentDraft.operationLogs || [];
+      const newLog: OperationLogEntry = {
+        id: generateId(),
+        type: 'note_add',
+        operatorName: authorName,
+        timestamp: Date.now(),
+        description: `新增交接备注${isPending ? '（待确认）' : ''}：${content.slice(0, 20)}${content.length > 20 ? '...' : ''}`,
+      };
+
       const updatedDraft: Draft = {
         ...state.currentDraft,
         handoverNotes: [...notes, newNote],
+        operationLogs: [newLog, ...logs],
         updatedAt: Date.now(),
       };
       debouncedAutoSave(() => get().saveCurrentDraft());
@@ -659,6 +673,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
     set((state) => {
       if (!state.currentDraft) return state;
       const notes = state.currentDraft.handoverNotes || [];
+      let confirmedNote: HandoverNote | undefined;
       const handoverNotes = notes.map((note) =>
         note.id === noteId
           ? {
@@ -669,9 +684,21 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
             }
           : note
       );
+      confirmedNote = notes.find(n => n.id === noteId);
+
+      const logs = state.currentDraft.operationLogs || [];
+      const newLog: OperationLogEntry = {
+        id: generateId(),
+        type: 'note_confirm',
+        operatorName: confirmerName,
+        timestamp: Date.now(),
+        description: `确认备注：${confirmedNote ? confirmedNote.content.slice(0, 20) + (confirmedNote.content.length > 20 ? '...' : '') : ''}`,
+      };
+
       const updatedDraft: Draft = {
         ...state.currentDraft,
         handoverNotes,
+        operationLogs: [newLog, ...logs],
         updatedAt: Date.now(),
       };
       debouncedAutoSave(() => get().saveCurrentDraft());
@@ -682,8 +709,11 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   setPreliminaryReview: (result) => {
     set((state) => {
       if (!state.currentDraft) return state;
+      const fromStatus = state.currentDraft.status;
+      const newStatus: Draft['status'] = state.currentDraft.judgment.needsReview ? 'pending_review' : fromStatus;
       const updatedDraft: Draft = {
         ...state.currentDraft,
+        status: newStatus,
         judgment: {
           ...state.currentDraft.judgment,
           preliminaryReview: result,
@@ -698,6 +728,21 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
         updatedAt: Date.now(),
       };
       debouncedAutoSave(() => get().saveCurrentDraft());
+
+      if (state.currentDraft.judgment.needsReview) {
+        const logs = state.currentDraft.operationLogs || [];
+        const newLog: OperationLogEntry = {
+          id: generateId(),
+          type: 'preliminary_save',
+          operatorName: result.reviewerName,
+          timestamp: Date.now(),
+          description: `初判保存，结论：${result.conclusion === 'pass' ? '合格' : result.conclusion === 'fail' ? '不合格' : '未判定'}，流转为待复核`,
+          fromStatus,
+          toStatus: newStatus,
+        };
+        updatedDraft.operationLogs = [newLog, ...logs];
+      }
+
       return { currentDraft: updatedDraft };
     });
   },
@@ -709,9 +754,17 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
         ? state.currentDraft.judgment.preliminaryReview.conclusion === result.conclusion
         : null;
       const needsDecision = isConsistent === false;
+      const fromStatus = state.currentDraft.status;
+      let newStatus: Draft['status'] = fromStatus;
+      if (needsDecision) {
+        newStatus = 'pending_review';
+      } else if (isConsistent === true) {
+        newStatus = 'completed';
+      }
+
       const updatedDraft: Draft = {
         ...state.currentDraft,
-        status: needsDecision ? 'pending_review' : state.currentDraft.status,
+        status: newStatus,
         judgment: {
           ...state.currentDraft.judgment,
           finalReview: result,
@@ -727,6 +780,19 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
         },
         updatedAt: Date.now(),
       };
+
+      const logs = state.currentDraft.operationLogs || [];
+      const newLog: OperationLogEntry = {
+        id: generateId(),
+        type: 'final_save',
+        operatorName: result.reviewerName,
+        timestamp: Date.now(),
+        description: `复核保存，结论：${result.conclusion === 'pass' ? '合格' : result.conclusion === 'fail' ? '不合格' : '未判定'}，与初判${isConsistent === true ? '一致' : isConsistent === false ? '不一致' : '无法判断'}${newStatus === 'completed' ? '，核查完成' : newStatus === 'pending_review' ? '，待最终裁定' : ''}`,
+        fromStatus,
+        toStatus: newStatus,
+      };
+      updatedDraft.operationLogs = [newLog, ...logs];
+
       debouncedAutoSave(() => get().saveCurrentDraft());
       return { currentDraft: updatedDraft };
     });
@@ -839,9 +905,11 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   setFinalDecision: (decision) => {
     set((state) => {
       if (!state.currentDraft) return state;
+      const fromStatus = state.currentDraft.status;
+      const newStatus: Draft['status'] = 'completed';
       const updatedDraft: Draft = {
         ...state.currentDraft,
-        status: 'completed',
+        status: newStatus,
         judgment: {
           ...state.currentDraft.judgment,
           finalDecision: decision,
@@ -849,6 +917,19 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
         },
         updatedAt: Date.now(),
       };
+
+      const logs = state.currentDraft.operationLogs || [];
+      const newLog: OperationLogEntry = {
+        id: generateId(),
+        type: 'decision_save',
+        operatorName: decision.deciderName,
+        timestamp: Date.now(),
+        description: `最终裁定：${decision.finalConclusion === 'pass' ? '合格' : decision.finalConclusion === 'fail' ? '不合格' : '未判定'}，裁定意见：${decision.decisionOpinion || '无'}，核查完成`,
+        fromStatus,
+        toStatus: newStatus,
+      };
+      updatedDraft.operationLogs = [newLog, ...logs];
+
       debouncedAutoSave(() => get().saveCurrentDraft());
       return { currentDraft: updatedDraft };
     });
@@ -880,5 +961,29 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
 
   hideToast: () => {
     set((state) => ({ toast: { ...state.toast, visible: false } }));
+  },
+
+  addOperationLog: (type, operatorName, description, toStatus) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const fromStatus = state.currentDraft.status;
+      const newLog: OperationLogEntry = {
+        id: generateId(),
+        type,
+        operatorName,
+        timestamp: Date.now(),
+        description,
+        fromStatus,
+        toStatus: toStatus || fromStatus,
+      };
+      const logs = state.currentDraft.operationLogs || [];
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        operationLogs: [newLog, ...logs],
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
   },
 }));

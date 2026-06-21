@@ -1,6 +1,7 @@
-import type { Draft, ClarityLevel, CompletenessLevel, DefectType, ImageData } from '@/types';
+import type { Draft, ClarityLevel, CompletenessLevel, DefectType, ImageData, OperationType, OperationLogEntry } from '@/types';
 import { formatDateTime } from '@/utils/date';
 import { useRef, useEffect } from 'react';
+import { FileCheck, ShieldCheck, Gavel, MessageSquare, CheckSquare, Activity } from 'lucide-react';
 
 interface VerificationSheetProps {
   draft: Draft;
@@ -431,6 +432,80 @@ export function VerificationSheet({ draft }: VerificationSheetProps) {
                     <span className="text-gray-400 text-xs">裁定人签字：_______________</span>
                   </div>
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {draft.operationLogs && draft.operationLogs.length > 0 && (
+          <div className="mb-6 page-break-inside-avoid">
+            <h2 className="text-lg font-semibold text-gray-800 mb-3 border-b pb-2 flex items-center gap-2">
+              <Activity size={18} className="text-gray-600" />
+              操作日志
+              <span className="ml-2 text-sm font-normal text-gray-500">（共 {draft.operationLogs.length} 条记录）</span>
+            </h2>
+            <div className="bg-gray-50 rounded-lg p-4 space-y-3 max-h-80 overflow-y-auto">
+              {(() => {
+                const typeConfig: Record<OperationType, { label: string; color: string; bg: string }> = {
+                  preliminary_save: { label: '初判保存', color: 'text-blue-700', bg: 'bg-blue-100' },
+                  final_save: { label: '复核保存', color: 'text-purple-700', bg: 'bg-purple-100' },
+                  decision_save: { label: '最终裁定', color: 'text-indigo-700', bg: 'bg-indigo-100' },
+                  note_add: { label: '新增备注', color: 'text-amber-700', bg: 'bg-amber-100' },
+                  note_confirm: { label: '备注确认', color: 'text-green-700', bg: 'bg-green-100' },
+                  handover_confirm: { label: '交接确认', color: 'text-teal-700', bg: 'bg-teal-100' },
+                  status_change: { label: '状态变更', color: 'text-gray-700', bg: 'bg-gray-100' },
+                };
+
+                return draft.operationLogs.slice(0, 20).map((log, idx) => {
+                  const cfg = typeConfig[log.type] || typeConfig.status_change;
+                  return (
+                    <div key={log.id} className="flex items-start gap-3 bg-white rounded-lg p-3 border border-gray-100">
+                      <div className={`w-8 h-8 rounded-full ${cfg.bg} flex items-center justify-center flex-shrink-0`}>
+                        {log.type === 'preliminary_save' && <FileCheck size={14} className={cfg.color} />}
+                        {log.type === 'final_save' && <ShieldCheck size={14} className={cfg.color} />}
+                        {log.type === 'decision_save' && <Gavel size={14} className={cfg.color} />}
+                        {(log.type === 'note_add' || log.type === 'note_confirm') && <MessageSquare size={14} className={cfg.color} />}
+                        {log.type === 'handover_confirm' && <CheckSquare size={14} className={cfg.color} />}
+                        {log.type === 'status_change' && <Activity size={14} className={cfg.color} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${cfg.bg} ${cfg.color} font-medium`}>
+                              {cfg.label}
+                            </span>
+                            <span className="text-sm font-medium text-gray-800">{log.operatorName}</span>
+                          </div>
+                          <span className="text-xs text-gray-400 flex-shrink-0">
+                            {formatDateTime(log.timestamp)}
+                          </span>
+                        </div>
+                        <div className="text-sm text-gray-600 leading-relaxed">
+                          {log.description}
+                        </div>
+                        {(log.fromStatus || log.toStatus) && (
+                          <div className="text-xs text-gray-400 mt-1">
+                            {log.fromStatus && log.toStatus && (
+                              <span>
+                                状态：{log.fromStatus === 'incomplete' ? '未完成' : log.fromStatus === 'pending_review' ? '待复核' : '已完成'}
+                                {' → '}
+                                {log.toStatus === 'incomplete' ? '未完成' : log.toStatus === 'pending_review' ? '待复核' : '已完成'}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-300 flex-shrink-0 ml-2">
+                        #{idx + 1}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            {draft.operationLogs.length > 20 && (
+              <div className="text-xs text-gray-400 text-center mt-2">
+                仅展示最近20条，完整记录请查看系统后台
               </div>
             )}
           </div>

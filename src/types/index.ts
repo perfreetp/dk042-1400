@@ -193,6 +193,58 @@ export interface FinalDecision {
 }
 
 /**
+ * 操作日志类型
+ */
+export type OperationType =
+  | 'preliminary_save'      // 初判保存
+  | 'final_save'            // 复核保存
+  | 'decision_save'         // 最终裁定保存
+  | 'note_add'              // 新增备注
+  | 'note_confirm'          // 备注确认
+  | 'handover_confirm'      // 交接确认
+  | 'status_change';        // 状态变更
+
+/**
+ * 操作日志条目
+ */
+export interface OperationLogEntry {
+  /** 日志唯一标识 */
+  id: string;
+  /** 操作类型 */
+  type: OperationType;
+  /** 操作人姓名 */
+  operatorName: string;
+  /** 操作时间戳 */
+  timestamp: number;
+  /** 操作描述 */
+  description: string;
+  /** 操作前状态 */
+  fromStatus?: DraftStatus;
+  /** 操作后状态 */
+  toStatus?: DraftStatus;
+}
+
+/**
+ * 交接确认记录
+ */
+export interface HandoverConfirmation {
+  /** 确认唯一标识 */
+  id: string;
+  /** 交班班次 */
+  shift: ShiftType;
+  /** 交接日期（YYYY-MM-DD） */
+  handoverDate: string;
+  /** 接班人姓名 */
+  receiverName: string;
+  /** 接收时间戳 */
+  receivedAt: number;
+  /** 已确认的草稿ID列表 */
+  confirmedDraftIds: string[];
+  /** 交接备注 */
+  remarks?: string;
+}
+
+/**
  * 草稿状态
  * - incomplete: 未完成
  * - pending_review: 待复核（初判完成，复核未完成）
@@ -222,6 +274,8 @@ export interface Draft {
   judgment: Judgment;
   /** 交接备注列表 */
   handoverNotes: HandoverNote[];
+  /** 操作日志列表 */
+  operationLogs: OperationLogEntry[];
 }
 
 /**
@@ -248,6 +302,8 @@ export const STORAGE_KEYS = {
   DRAFTS: 'qc_review_drafts',
   /** 当前草稿ID */
   CURRENT_DRAFT_ID: 'qc_current_draft_id',
+  /** 交接确认记录 */
+  HANDOVER_CONFIRMATIONS: 'qc_handover_confirmations',
 } as const;
 
 /**

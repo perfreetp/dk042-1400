@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
 import { useReviewStore } from '@/store/useReviewStore';
-import { PRESET_PHRASES, type DefectType, type ClarityLevel, type CompletenessLevel, type ReviewResult, type FinalDecision, type Conclusion } from '@/types';
+import { PRESET_PHRASES, type DefectType, type ClarityLevel, type CompletenessLevel, type ReviewResult, type FinalDecision, type Conclusion, type OperationType } from '@/types';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
-import { Check, AlertCircle, ThumbsUp, ThumbsDown, Wand2, Save, Printer, ArrowLeft, FileText, UserCheck, Users, RefreshCw, ShieldCheck, Gavel, Scale } from 'lucide-react';
+import { Check, AlertCircle, ThumbsUp, ThumbsDown, Wand2, Save, Printer, ArrowLeft, FileText, UserCheck, Users, RefreshCw, ShieldCheck, Gavel, Scale, FileCheck, MessageSquare, CheckSquare, Activity } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { formatDateTime } from '@/utils/date';
 
 const clarityOptions: { value: ClarityLevel; label: string; description: string }[] = [
   { value: 'clear', label: '清晰', description: '图像细节清晰，无模糊' },
@@ -1102,6 +1103,82 @@ export function JudgmentForm() {
               </div>
             </div>
           </Card>
+        </div>
+      )}
+
+      {currentDraft.operationLogs && currentDraft.operationLogs.length > 0 && (
+        <div className="border border-gray-200 rounded-xl overflow-hidden bg-gradient-to-br from-gray-50 to-slate-50">
+          <div className="px-5 py-3 bg-white border-b border-gray-200 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center">
+              <Activity size={18} className="text-gray-600" />
+            </div>
+            <div className="flex-1">
+              <div className="font-semibold text-gray-800 flex items-center gap-2">
+                操作日志
+                <span className="text-xs font-normal text-gray-400">（共 {currentDraft.operationLogs.length} 条记录）</span>
+              </div>
+              <div className="text-xs text-gray-500">展示本次质控的所有关键操作历史</div>
+            </div>
+          </div>
+          <div className="p-4 space-y-3 max-h-96 overflow-y-auto">
+            {(() => {
+              const typeConfig: Record<OperationType, { label: string; color: string; bg: string }> = {
+                preliminary_save: { label: '初判保存', color: 'text-blue-700', bg: 'bg-blue-100' },
+                final_save: { label: '复核保存', color: 'text-purple-700', bg: 'bg-purple-100' },
+                decision_save: { label: '最终裁定', color: 'text-indigo-700', bg: 'bg-indigo-100' },
+                note_add: { label: '新增备注', color: 'text-amber-700', bg: 'bg-amber-100' },
+                note_confirm: { label: '备注确认', color: 'text-green-700', bg: 'bg-green-100' },
+                handover_confirm: { label: '交接确认', color: 'text-teal-700', bg: 'bg-teal-100' },
+                status_change: { label: '状态变更', color: 'text-gray-700', bg: 'bg-gray-100' },
+              };
+
+              return currentDraft.operationLogs.map((log, idx) => {
+                const cfg = typeConfig[log.type] || typeConfig.status_change;
+                return (
+                  <div key={log.id} className="flex items-start gap-3 bg-white rounded-lg p-3 border border-gray-100 hover:border-gray-200 transition-colors">
+                    <div className={`w-8 h-8 rounded-full ${cfg.bg} flex items-center justify-center flex-shrink-0`}>
+                      {log.type === 'preliminary_save' && <FileCheck size={14} className={cfg.color} />}
+                      {log.type === 'final_save' && <ShieldCheck size={14} className={cfg.color} />}
+                      {log.type === 'decision_save' && <Gavel size={14} className={cfg.color} />}
+                      {(log.type === 'note_add' || log.type === 'note_confirm') && <MessageSquare size={14} className={cfg.color} />}
+                      {log.type === 'handover_confirm' && <CheckSquare size={14} className={cfg.color} />}
+                      {log.type === 'status_change' && <Activity size={14} className={cfg.color} />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${cfg.bg} ${cfg.color} font-medium`}>
+                            {cfg.label}
+                          </span>
+                          <span className="text-sm font-medium text-gray-800">{log.operatorName}</span>
+                        </div>
+                        <span className="text-xs text-gray-400 flex-shrink-0">
+                          {formatDateTime(log.timestamp)}
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-600 leading-relaxed">
+                        {log.description}
+                      </div>
+                      {(log.fromStatus || log.toStatus) && (
+                        <div className="text-xs text-gray-400 mt-1">
+                          {log.fromStatus && log.toStatus && (
+                            <span>
+                              状态：{log.fromStatus === 'incomplete' ? '未完成' : log.fromStatus === 'pending_review' ? '待复核' : '已完成'}
+                              {' → '}
+                              {log.toStatus === 'incomplete' ? '未完成' : log.toStatus === 'pending_review' ? '待复核' : '已完成'}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-300 flex-shrink-0 ml-2">
+                      #{idx + 1}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
         </div>
       )}
 

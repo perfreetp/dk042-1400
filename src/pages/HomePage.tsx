@@ -6,12 +6,12 @@ import { useDraftStore } from '@/store/useDraftStore';
 import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { formatDateTime } from '@/utils/date';
-import { FileText, Plus, Clock, CheckCircle, AlertCircle, FileImage } from 'lucide-react';
+import { FileText, Plus, Clock, CheckCircle, AlertCircle, FileImage, ShieldCheck } from 'lucide-react';
 
 export function HomePage() {
   const navigate = useNavigate();
   const { createNewDraft, addImage, currentDraft, showToast } = useReviewStore();
-  const { drafts, loadDrafts, getIncompleteCount, getDraftCount } = useDraftStore();
+  const { drafts, loadDrafts, getIncompleteCount, getDraftCount, getPendingReviewCount } = useDraftStore();
 
   useEffect(() => {
     loadDrafts();
@@ -41,6 +41,7 @@ export function HomePage() {
 
   const incompleteCount = getIncompleteCount();
   const totalCount = getDraftCount();
+  const pendingReviewCount = getPendingReviewCount();
   const recentDrafts = drafts.slice(0, 5);
 
   const getStatusBadge = (status: string) => {
@@ -49,6 +50,14 @@ export function HomePage() {
         <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-green-100 text-green-700 rounded-full">
           <CheckCircle size={12} />
           已完成
+        </span>
+      );
+    }
+    if (status === 'pending_review') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded-full">
+          <ShieldCheck size={12} />
+          待复核
         </span>
       );
     }
@@ -77,13 +86,20 @@ export function HomePage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-4 gap-6">
         <Card className="text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-medical-100 flex items-center justify-center">
             <FileImage size={32} className="text-medical-600" />
           </div>
           <div className="text-3xl font-bold text-medical-800">{totalCount}</div>
           <div className="text-gray-500">总核查数</div>
+        </Card>
+        <Card className="text-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-orange-100 flex items-center justify-center">
+            <ShieldCheck size={32} className="text-orange-600" />
+          </div>
+          <div className="text-3xl font-bold text-orange-600">{pendingReviewCount}</div>
+          <div className="text-gray-500">待复核</div>
         </Card>
         <Card className="text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-yellow-100 flex items-center justify-center">
@@ -97,7 +113,7 @@ export function HomePage() {
             <CheckCircle size={32} className="text-green-600" />
           </div>
           <div className="text-3xl font-bold text-green-600">
-            {totalCount - incompleteCount}
+            {totalCount - incompleteCount - pendingReviewCount}
           </div>
           <div className="text-gray-500">已完成核查</div>
         </Card>
@@ -125,45 +141,52 @@ export function HomePage() {
           }
         >
           <div className="space-y-3">
-            {recentDrafts.map((draft) => (
-              <div
-                key={draft.id}
-                className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-medical-50 transition-colors cursor-pointer group"
-                onClick={() => handleContinueDraft(draft.id)}
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-lg bg-medical-100 flex items-center justify-center">
-                    <FileText size={24} className="text-medical-600" />
+            {recentDrafts.map((draft) => {
+              const statusRingClass =
+                draft.status === 'pending_review' ? 'border-l-4 border-l-orange-500' :
+                draft.status === 'incomplete' ? 'border-l-4 border-l-yellow-500' :
+                draft.status === 'completed' ? 'border-l-4 border-l-green-500' : '';
+
+              return (
+                <div
+                  key={draft.id}
+                  className={`flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-medical-50 transition-colors cursor-pointer group ${statusRingClass}`}
+                  onClick={() => handleContinueDraft(draft.id)}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-lg bg-medical-100 flex items-center justify-center">
+                      <FileText size={24} className="text-medical-600" />
+                    </div>
+                    <div>
+                      <div className="font-medium text-gray-800">
+                        {draft.patientInfo.name || '未命名患者'}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {draft.patientInfo.studyNo || '无检查号'} · {draft.patientInfo.bodyPart || '未填写部位'}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        {formatDateTime(draft.updatedAt)} · {draft.images.length} 张图片
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="font-medium text-gray-800">
-                      {draft.patientInfo.name || '未命名患者'}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {draft.patientInfo.studyNo || '无检查号'} · {draft.patientInfo.bodyPart || '未填写部位'}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-1">
-                      {formatDateTime(draft.updatedAt)} · {draft.images.length} 张图片
-                    </div>
+                  <div className="flex items-center gap-4">
+                    {draft.judgment.conclusion && getConclusionLabel(draft.judgment.conclusion)}
+                    {getStatusBadge(draft.status)}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleContinueDraft(draft.id);
+                      }}
+                    >
+                      {draft.status === 'incomplete' ? '继续' : draft.status === 'pending_review' ? '审核' : '查看'}
+                    </Button>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  {draft.judgment.conclusion && getConclusionLabel(draft.judgment.conclusion)}
-                  {getStatusBadge(draft.status)}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleContinueDraft(draft.id);
-                    }}
-                  >
-                    {draft.status === 'incomplete' ? '继续' : '查看'}
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       )}

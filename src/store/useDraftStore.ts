@@ -1,9 +1,11 @@
 import { create } from 'zustand';
-import type { Draft, Judgment } from '@/types';
-import { getDrafts, deleteDraft as removeDraft, clearOldDrafts as cleanOld } from '@/utils/storage';
+import type { Draft, Judgment, HandoverConfirmation, ShiftType } from '@/types';
+import { getDrafts, deleteDraft as removeDraft, clearOldDrafts as cleanOld, getHandoverConfirmations, saveHandoverConfirmation, getHandoverConfirmationForShift } from '@/utils/storage';
+import { generateId } from '@/utils/storage';
 
 interface DraftState {
   drafts: Draft[];
+  handoverConfirmations: HandoverConfirmation[];
   isLoading: boolean;
 }
 
@@ -14,12 +16,16 @@ interface DraftActions {
   getDraftCount: () => number;
   getIncompleteCount: () => number;
   getPendingReviewCount: () => number;
+  loadHandoverConfirmations: () => void;
+  addHandoverConfirmation: (data: Omit<HandoverConfirmation, 'id' | 'receivedAt'>) => HandoverConfirmation;
+  getHandoverForShift: (shift: ShiftType, date: string) => HandoverConfirmation | undefined;
 }
 
 type DraftStore = DraftState & DraftActions;
 
 const initialState: DraftState = {
   drafts: [],
+  handoverConfirmations: [],
   isLoading: false,
 };
 
@@ -44,6 +50,7 @@ const migrateDraft = (draft: any): Draft => {
     ...draft,
     status: draft.status === 'completed' ? 'completed' : (draft.status === 'pending_review' ? 'pending_review' : 'incomplete'),
     handoverNotes: Array.isArray(draft.handoverNotes) ? draft.handoverNotes : [],
+    operationLogs: Array.isArray(draft.operationLogs) ? draft.operationLogs : [],
     judgment: {
       ...createEmptyJudgment(),
       ...j,
@@ -112,5 +119,31 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
 
   getPendingReviewCount: () => {
     return get().drafts.filter((d) => d.status === 'pending_review').length;
+  },
+
+  loadHandoverConfirmations: () => {
+    try {
+      const confirmations = getHandoverConfirmations();
+      set({ handoverConfirmations: confirmations });
+    } catch (error) {
+      console.error('Failed to load handover confirmations:', error);
+    }
+  },
+
+  addHandoverConfirmation: (data) => {
+    const newConfirmation: HandoverConfirmation = {
+      ...data,
+      id: generateId(),
+      receivedAt: Date.now(),
+    };
+    saveHandoverConfirmation(newConfirmation);
+    set((state) => ({
+      handoverConfirmations: [newConfirmation, ...state.handoverConfirmations],
+    }));
+    return newConfirmation;
+  },
+
+  getHandoverForShift: (shift, date) => {
+    return getHandoverConfirmationForShift(shift, date);
   },
 }));
