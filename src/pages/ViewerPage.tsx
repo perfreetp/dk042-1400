@@ -4,6 +4,7 @@ import { useReviewStore } from '@/store/useReviewStore';
 import { ImageViewer } from '@/components/business/ImageViewer';
 import { PatientForm } from '@/components/business/PatientForm';
 import { DropZone } from '@/components/business/DropZone';
+import { ProgressSidebar } from '@/components/business/ProgressSidebar';
 import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Toast } from '@/components/common/Toast';
@@ -92,7 +93,8 @@ export function ViewerPage() {
   const currentImage = currentDraft.images[currentImageIndex];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative pr-80">
+      <ProgressSidebar draft={currentDraft} />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-serif font-bold text-medical-800">图片查看</h2>

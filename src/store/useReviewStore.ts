@@ -318,45 +318,135 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   autoGenerateConclusion: () => {
     set((state) => {
       if (!state.currentDraft) return state;
-      const judgment = state.currentDraft.judgment;
+      const { judgment, images } = state.currentDraft;
       let conclusion: 'pass' | 'fail' | '' = '';
       let rejectionReason = '';
 
-      const isBlur = judgment.clarity === 'blur';
-      const isMissing = judgment.completeness === 'missing';
-      const hasManyDefects = judgment.defects.length >= 3;
+      const clarityLevel = judgment.clarity;
+      const completenessLevel = judgment.completeness;
+      const defectCount = judgment.defects.length;
+
+      const totalMarks = images.reduce((sum, img) => sum + img.marks.length, 0);
+      const stainCount = images.reduce((sum, img) => sum + img.marks.filter(m => m.type === 'stain').length, 0);
+      const shadowCount = images.reduce((sum, img) => sum + img.marks.filter(m => m.type === 'shadow').length, 0);
+
+      const defectLabels: Record<string, string> = {
+        stain: '污点',
+        shadow: '阴影',
+        artifact: '伪影',
+        thickness: '层厚不均',
+        position: '位置偏差',
+      };
+
+      const clarityLabels: Record<string, string> = {
+        clear: '清晰',
+        moderate: '较清晰',
+        blur: '模糊',
+      };
+
+      const completenessLabels: Record<string, string> = {
+        complete: '完整',
+        partial: '部分缺失',
+        missing: '严重缺失',
+      };
 
       const reasons: string[] = [];
-      
-      if (isBlur) {
-        reasons.push('图像模糊');
-      }
-      if (isMissing) {
-        reasons.push('图像严重缺失');
-      }
-      if (hasManyDefects) {
-        reasons.push('缺陷项过多');
+      const suggestions: string[] = [];
+
+      let failScore = 0;
+
+      if (clarityLevel === 'blur') {
+        failScore += 3;
+        reasons.push('图像模糊，细节显示不清');
+        suggestions.push('调整拍摄参数或重新对焦');
+      } else if (clarityLevel === 'moderate') {
+        failScore += 1;
+        reasons.push('图像清晰度一般');
       }
 
-      if (isBlur || isMissing || hasManyDefects) {
-        conclusion = 'fail';
-        const defectLabels: Record<string, string> = {
-          stain: '存在污点',
-          shadow: '存在阴影',
-          artifact: '存在伪影',
-          thickness: '层厚不均',
-          position: '位置偏差',
-        };
-        judgment.defects.forEach((d) => {
-          const label = defectLabels[d];
-          if (label && !reasons.includes(label)) {
-            reasons.push(label);
+      if (completenessLevel === 'missing') {
+        failScore += 3;
+        reasons.push('检查部位严重缺失');
+        suggestions.push('重新摆位，确保检查部位完整');
+      } else if (completenessLevel === 'partial') {
+        failScore += 1;
+        reasons.push('检查部位部分缺失');
+        suggestions.push('注意拍摄范围');
+      }
+
+      if (defectCount >= 3) {
+        failScore += 2;
+        reasons.push(`缺陷项过多（${defectCount}项）`);
+      } else if (defectCount >= 1) {
+        failScore += defectCount * 0.5;
+      }
+
+      if (totalMarks >= 5) {
+        failScore += 1;
+      }
+
+      judgment.defects.forEach((d) => {
+        const label = defectLabels[d];
+        if (label) {
+          if (d === 'stain' && stainCount > 0) {
+            reasons.push(`存在${stainCount}处污点`);
+          } else if (d === 'shadow' && shadowCount > 0) {
+            reasons.push(`存在${shadowCount}处阴影`);
+          } else if (!reasons.some(r => r.includes(label))) {
+            reasons.push(`存在${label}`);
           }
-        });
-        rejectionReason = reasons.join('；') + '，建议重拍。';
-      } else if (judgment.clarity === 'clear' && judgment.completeness === 'complete' && judgment.defects.length === 0) {
+          if (d === 'artifact' && !suggestions.some(s => s.includes('伪影'))) {
+            suggestions.push('检查设备并去除伪影来源');
+          }
+          if (d === 'thickness' && !suggestions.some(s => s.includes('层厚'))) {
+            suggestions.push('调整扫描层厚参数');
+          }
+          if (d === 'position' && !suggestions.some(s => s.includes('摆位'))) {
+            suggestions.push('重新摆位校正');
+          }
+        }
+      });
+
+      if (clarityLevel === 'clear' && completenessLevel === 'complete' && defectCount === 0 && totalMarks === 0) {
         conclusion = 'pass';
-        rejectionReason = '图像质量良好，符合诊断要求。';
+        rejectionReason = '图像质量良好：清晰度' + clarityLabels[clarityLevel] + '，完整性' + completenessLabels[completenessLevel] + '，无明显缺陷，符合诊断要求。';
+      } else if (clarityLevel === 'clear' && completenessLevel === 'complete' && defectCount <= 1 && failScore < 2) {
+        conclusion = 'pass';
+        const defectDesc = defectCount > 0
+          ? `，存在轻微问题：${judgment.defects.map(d => defectLabels[d]).join('、')}`
+          : '';
+        rejectionReason = `图像质量合格：清晰度${clarityLabels[clarityLevel]}，完整性${clarityLabels[completenessLevel] || ''}${defectDesc}，不影响诊断。`;
+      } else if (clarityLevel === 'moderate' && completenessLevel === 'complete' && defectCount <= 1 && failScore < 2) {
+        conclusion = 'pass';
+        const defectDesc = defectCount > 0
+          ? `，存在${judgment.defects.map(d => defectLabels[d]).join('、')}`
+          : '';
+        rejectionReason = `图像质量基本合格：清晰度${clarityLabels[clarityLevel]}，完整性${completenessLabels[completenessLevel]}${defectDesc}，虽然清晰度一般但不影响诊断。`;
+      } else if (clarityLevel === 'moderate' && completenessLevel === 'partial' && failScore < 3) {
+        conclusion = 'fail';
+        reasons.unshift('清晰度一般且检查部位不完整');
+        suggestions.push('建议重拍，确保图像清晰完整');
+      } else if (failScore >= 2) {
+        conclusion = 'fail';
+      } else if (clarityLevel && completenessLevel) {
+        conclusion = defectCount >= 2 ? 'fail' : 'pass';
+        if (conclusion === 'pass') {
+          rejectionReason = `图像质量合格：清晰度${clarityLabels[clarityLevel]}，完整性${completenessLabels[completenessLevel]}。`;
+        }
+      }
+
+      if (conclusion === 'fail' && rejectionReason === '') {
+        const reasonText = reasons.length > 0 ? reasons.join('；') : '图像质量不符合标准';
+        const suggestionText = suggestions.length > 0 ? `。建议：${suggestions.join('；')}` : '';
+        rejectionReason = `${reasonText}${suggestionText}，建议重拍。`;
+      }
+
+      if (!clarityLevel || !completenessLevel) {
+        const missing: string[] = [];
+        if (!clarityLevel) missing.push('清晰度');
+        if (!completenessLevel) missing.push('完整性');
+        rejectionReason = `请先选择${missing.join('和')}后再生成结论。`;
+        conclusion = '';
       }
 
       const updatedDraft: Draft = {

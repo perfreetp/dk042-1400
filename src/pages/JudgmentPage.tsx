@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useReviewStore } from '@/store/useReviewStore';
 import { JudgmentForm } from '@/components/business/JudgmentForm';
+import { ProgressSidebar } from '@/components/business/ProgressSidebar';
 import { Toast } from '@/components/common/Toast';
 
 export function JudgmentPage() {
@@ -34,7 +35,8 @@ export function JudgmentPage() {
   }
 
   return (
-    <div>
+    <div className="relative pr-80">
+      <ProgressSidebar draft={currentDraft} />
       <JudgmentForm />
       <Toast
         message={toast.message}
