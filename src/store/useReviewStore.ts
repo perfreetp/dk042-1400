@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Draft, PatientInfo, ImageData, Mark, MarkType, Judgment, ClarityLevel, CompletenessLevel, HandoverNote, ReviewResult } from '@/types';
+import type { Draft, PatientInfo, ImageData, Mark, MarkType, Judgment, ClarityLevel, CompletenessLevel, HandoverNote, ReviewResult, FinalDecision } from '@/types';
 import { fileToDataUrl, getImageDimensions } from '@/utils/image';
 import { generateId, saveDraft, getDraft } from '@/utils/storage';
 import { getCurrentDateTime } from '@/utils/date';
@@ -43,6 +43,8 @@ interface ReviewActions {
   clearFinalReview: () => void;
   getReviewProgress: () => number;
   setNeedsReview: (needs: boolean) => void;
+  setFinalDecision: (decision: FinalDecision) => void;
+  clearFinalDecision: () => void;
 }
 
 type ReviewStore = ReviewState & ReviewActions;
@@ -86,6 +88,7 @@ const createEmptyJudgment = (): Judgment => ({
   finalReview: null,
   needsReview: false,
   isConsistent: null,
+  finalDecision: null,
 });
 
 const debouncedAutoSave = (saveFn: () => boolean) => {
@@ -95,6 +98,25 @@ const debouncedAutoSave = (saveFn: () => boolean) => {
   autoSaveTimer = setTimeout(() => {
     saveFn();
   }, AUTO_SAVE_DELAY);
+};
+
+const migrateDraft = (draft: any): Draft => {
+  const j = draft.judgment || createEmptyJudgment();
+  const migrated: Draft = {
+    ...draft,
+    status: draft.status === 'completed' ? 'completed' : (draft.status === 'pending_review' ? 'pending_review' : 'incomplete'),
+    handoverNotes: Array.isArray(draft.handoverNotes) ? draft.handoverNotes : [],
+    judgment: {
+      ...createEmptyJudgment(),
+      ...j,
+      preliminaryReview: j.preliminaryReview || null,
+      finalReview: j.finalReview || null,
+      needsReview: j.needsReview || false,
+      isConsistent: j.isConsistent !== undefined ? j.isConsistent : null,
+      finalDecision: j.finalDecision || null,
+    },
+  };
+  return migrated;
 };
 
 export const useReviewStore = create<ReviewStore>((set, get) => ({
@@ -120,8 +142,9 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   loadDraft: async (id: string) => {
     set({ isLoading: true });
     try {
-      const draft = getDraft(id);
-      if (draft) {
+      const rawDraft = getDraft(id);
+      if (rawDraft) {
+        const draft = migrateDraft(rawDraft);
         set({ currentDraft: draft, currentImageIndex: draft.currentImageIndex || 0 });
         return true;
       }
@@ -507,23 +530,55 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       get().showToast('请先添加图片', 'error');
       return false;
     }
-    if (!currentDraft.judgment.clarity) {
-      get().showToast('请选择清晰度', 'error');
-      return false;
-    }
-    if (!currentDraft.judgment.completeness) {
-      get().showToast('请选择完整性', 'error');
-      return false;
-    }
-    if (!currentDraft.judgment.conclusion) {
-      get().showToast('请先生成结论', 'error');
-      return false;
+
+    const { judgment } = currentDraft;
+    const needsReview = judgment.needsReview;
+    const hasPreliminary = !!judgment.preliminaryReview;
+    const hasFinal = !!judgment.finalReview;
+    const isInconsistent = needsReview && hasPreliminary && hasFinal && judgment.isConsistent === false;
+    const hasDecision = !!judgment.finalDecision;
+
+    if (needsReview) {
+      if (!hasPreliminary) {
+        get().showToast('请先完成初判', 'error');
+        return false;
+      }
+      if (!hasFinal) {
+        get().showToast('请完成复核后再提交', 'error');
+        return false;
+      }
+      if (isInconsistent && !hasDecision) {
+        get().showToast('初判和复核不一致，请先记录最终裁定', 'error');
+        return false;
+      }
+    } else {
+      if (!judgment.clarity) {
+        get().showToast('请选择清晰度', 'error');
+        return false;
+      }
+      if (!judgment.completeness) {
+        get().showToast('请选择完整性', 'error');
+        return false;
+      }
+      if (!judgment.conclusion) {
+        get().showToast('请先生成结论', 'error');
+        return false;
+      }
     }
 
     try {
+      let newStatus: 'pending_review' | 'completed' = 'completed';
+      if (needsReview) {
+        if (hasPreliminary && !hasFinal) {
+          newStatus = 'pending_review';
+        } else if (isInconsistent && !hasDecision) {
+          newStatus = 'pending_review';
+        }
+      }
+
       const updatedDraft: Draft = {
         ...currentDraft,
-        status: 'completed',
+        status: newStatus,
         judgment: {
           ...currentDraft.judgment,
           reviewedAt: Date.now(),
@@ -532,7 +587,11 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       };
       saveDraft(updatedDraft);
       set({ currentDraft: updatedDraft });
-      get().showToast('核查完成，已保存', 'success');
+      if (newStatus === 'pending_review') {
+        get().showToast('初判已提交，等待复核', 'info');
+      } else {
+        get().showToast('核查完成，已保存', 'success');
+      }
       return true;
     } catch (error) {
       console.error('Failed to complete draft:', error);
@@ -544,6 +603,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   addHandoverNote: (content, authorName, isPending = true) => {
     set((state) => {
       if (!state.currentDraft) return state;
+      const notes = state.currentDraft.handoverNotes || [];
       const newNote: HandoverNote = {
         id: generateId(),
         content,
@@ -553,7 +613,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       };
       const updatedDraft: Draft = {
         ...state.currentDraft,
-        handoverNotes: [...state.currentDraft.handoverNotes, newNote],
+        handoverNotes: [...notes, newNote],
         updatedAt: Date.now(),
       };
       debouncedAutoSave(() => get().saveCurrentDraft());
@@ -564,7 +624,8 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   updateHandoverNote: (noteId, updates) => {
     set((state) => {
       if (!state.currentDraft) return state;
-      const handoverNotes = state.currentDraft.handoverNotes.map((note) =>
+      const notes = state.currentDraft.handoverNotes || [];
+      const handoverNotes = notes.map((note) =>
         note.id === noteId ? { ...note, ...updates } : note
       );
       const updatedDraft: Draft = {
@@ -580,7 +641,8 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   removeHandoverNote: (noteId) => {
     set((state) => {
       if (!state.currentDraft) return state;
-      const handoverNotes = state.currentDraft.handoverNotes.filter(
+      const notes = state.currentDraft.handoverNotes || [];
+      const handoverNotes = notes.filter(
         (note) => note.id !== noteId
       );
       const updatedDraft: Draft = {
@@ -596,7 +658,8 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   confirmHandoverNote: (noteId, confirmerName) => {
     set((state) => {
       if (!state.currentDraft) return state;
-      const handoverNotes = state.currentDraft.handoverNotes.map((note) =>
+      const notes = state.currentDraft.handoverNotes || [];
+      const handoverNotes = notes.map((note) =>
         note.id === noteId
           ? {
               ...note,
@@ -645,8 +708,10 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       const isConsistent = state.currentDraft.judgment.preliminaryReview
         ? state.currentDraft.judgment.preliminaryReview.conclusion === result.conclusion
         : null;
+      const needsDecision = isConsistent === false;
       const updatedDraft: Draft = {
         ...state.currentDraft,
+        status: needsDecision ? 'pending_review' : state.currentDraft.status,
         judgment: {
           ...state.currentDraft.judgment,
           finalReview: result,
@@ -658,6 +723,7 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
           reviewerName: result.reviewerName,
           reviewedAt: result.reviewedAt,
           isConsistent,
+          finalDecision: needsDecision ? state.currentDraft.judgment.finalDecision : null,
         },
         updatedAt: Date.now(),
       };
@@ -672,10 +738,12 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       const preliminary = state.currentDraft.judgment.preliminaryReview;
       const updatedDraft: Draft = {
         ...state.currentDraft,
+        status: preliminary ? 'pending_review' : 'incomplete',
         judgment: {
           ...state.currentDraft.judgment,
           finalReview: null,
           isConsistent: null,
+          finalDecision: null,
           clarity: preliminary?.clarity || '',
           completeness: preliminary?.completeness || '',
           defects: preliminary?.defects || [],
@@ -696,6 +764,12 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
     if (!currentDraft) return 0;
 
     const { patientInfo, images, judgment } = currentDraft;
+    const needsReview = judgment.needsReview;
+    const hasPreliminary = !!judgment.preliminaryReview;
+    const hasFinal = !!judgment.finalReview;
+    const isInconsistent = needsReview && hasPreliminary && hasFinal && judgment.isConsistent === false;
+    const hasDecision = !!judgment.finalDecision;
+
     let totalSteps = 4;
     let completedSteps = 0;
 
@@ -709,21 +783,86 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
 
     completedSteps++;
 
-    if (judgment.clarity && judgment.completeness && judgment.conclusion) {
-      completedSteps++;
+    if (needsReview) {
+      totalSteps = 5;
+      if (hasPreliminary && hasFinal) {
+        if (isInconsistent) {
+          if (hasDecision) {
+            completedSteps += 2;
+          } else {
+            completedSteps += 1;
+          }
+        } else {
+          completedSteps += 2;
+        }
+      } else if (hasPreliminary) {
+        completedSteps += 0;
+      }
+    } else {
+      if (judgment.clarity && judgment.completeness && judgment.conclusion) {
+        completedSteps++;
+      }
     }
 
-    return Math.round((completedSteps / totalSteps) * 100);
+    return Math.min(100, Math.round((completedSteps / totalSteps) * 100));
   },
 
   setNeedsReview: (needs) => {
     set((state) => {
       if (!state.currentDraft) return state;
+      let newStatus = state.currentDraft.status;
+      if (needs) {
+        const hasPreliminary = !!state.currentDraft.judgment.preliminaryReview;
+        const hasFinal = !!state.currentDraft.judgment.finalReview;
+        if (hasPreliminary && !hasFinal && newStatus !== 'completed') {
+          newStatus = 'pending_review';
+        }
+      } else {
+        if (newStatus === 'pending_review') {
+          newStatus = 'incomplete';
+        }
+      }
       const updatedDraft: Draft = {
         ...state.currentDraft,
+        status: newStatus,
         judgment: {
           ...state.currentDraft.judgment,
           needsReview: needs,
+        },
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  setFinalDecision: (decision) => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        status: 'completed',
+        judgment: {
+          ...state.currentDraft.judgment,
+          finalDecision: decision,
+          conclusion: decision.finalConclusion,
+        },
+        updatedAt: Date.now(),
+      };
+      debouncedAutoSave(() => get().saveCurrentDraft());
+      return { currentDraft: updatedDraft };
+    });
+  },
+
+  clearFinalDecision: () => {
+    set((state) => {
+      if (!state.currentDraft) return state;
+      const updatedDraft: Draft = {
+        ...state.currentDraft,
+        status: 'pending_review',
+        judgment: {
+          ...state.currentDraft.judgment,
+          finalDecision: null,
         },
         updatedAt: Date.now(),
       };

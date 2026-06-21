@@ -148,6 +148,8 @@ export interface Judgment {
   needsReview: boolean;
   /** 初判与复核结论是否一致 */
   isConsistent: boolean | null;
+  /** 最终裁定结果（复核不一致时使用） */
+  finalDecision: FinalDecision | null;
 }
 
 /**
@@ -177,11 +179,26 @@ export interface ImageData {
 }
 
 /**
+ * 最终裁定结果
+ */
+export interface FinalDecision {
+  /** 裁定人姓名 */
+  deciderName: string;
+  /** 裁定时间戳 */
+  decidedAt: number;
+  /** 裁定意见 */
+  decisionOpinion: string;
+  /** 处理结果 */
+  finalConclusion: Conclusion;
+}
+
+/**
  * 草稿状态
  * - incomplete: 未完成
+ * - pending_review: 待复核（初判完成，复核未完成）
  * - completed: 已完成
  */
-export type DraftStatus = 'incomplete' | 'completed';
+export type DraftStatus = 'incomplete' | 'pending_review' | 'completed';
 
 /**
  * 草稿数据

@@ -395,6 +395,44 @@ export function VerificationSheet({ draft }: VerificationSheetProps) {
                 </div>
               )}
             </div>
+
+            {judgment.finalDecision && (
+              <div className="mt-4 border-2 border-purple-300 bg-purple-50 rounded-lg p-4">
+                <div className="font-semibold text-purple-800 mb-3 pb-2 border-b border-purple-200 flex items-center gap-2">
+                  <span>⚖️</span>
+                  最终裁定
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">裁定人</span>
+                      <span className="font-medium text-gray-900">{judgment.finalDecision.deciderName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">裁定时间</span>
+                      <span className="font-medium text-gray-700">{formatDateTime(judgment.finalDecision.decidedAt)}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">裁定意见：</span>
+                    <div className="mt-1 text-gray-800 bg-white rounded p-3 border border-purple-200 leading-relaxed">
+                      {judgment.finalDecision.decisionOpinion}
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t border-purple-200">
+                    <span className="font-medium text-gray-700">最终结论</span>
+                    <span className={`text-lg font-bold ${
+                      judgment.finalDecision.finalConclusion === 'pass' ? 'text-green-700' : 'text-red-700'
+                    }`}>
+                      {judgment.finalDecision.finalConclusion === 'pass' ? '✅ 合格' : '❌ 不合格'}
+                    </span>
+                  </div>
+                  <div className="pt-2">
+                    <span className="text-gray-400 text-xs">裁定人签字：_______________</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -402,8 +440,17 @@ export function VerificationSheet({ draft }: VerificationSheetProps) {
           <div>
             {judgment.needsReview ? (
               <>
-                <span className="font-medium">最终审核：</span>
-                <span className="ml-1">{judgment.finalReview?.reviewerName || judgment.preliminaryReview?.reviewerName || '-'}</span>
+                {judgment.finalDecision ? (
+                  <>
+                    <span className="font-medium">最终裁定：</span>
+                    <span className="ml-1">{judgment.finalDecision.deciderName}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium">最终审核：</span>
+                    <span className="ml-1">{judgment.finalReview?.reviewerName || judgment.preliminaryReview?.reviewerName || '-'}</span>
+                  </>
+                )}
               </>
             ) : (
               <>

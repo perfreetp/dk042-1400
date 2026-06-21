@@ -44,10 +44,25 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
   const hasImages = images.length > 0;
   const hasMarks = totalMarks > 0;
   const judgmentStarted = judgment.clarity || judgment.completeness || judgment.defects.length > 0;
-  const judgmentCompleted = !!(judgment.clarity && judgment.completeness && judgment.conclusion);
+  const singleJudgmentDone = !!(judgment.clarity && judgment.completeness && judgment.conclusion);
   const hasPreliminaryReview = !!judgment.preliminaryReview;
   const hasFinalReview = !!judgment.finalReview;
   const needsReview = judgment.needsReview;
+  const hasFinalDecision = !!judgment.finalDecision;
+  const isInconsistent = needsReview && hasPreliminaryReview && hasFinalReview && judgment.isConsistent === false;
+
+  let judgmentCompleted = false;
+  if (needsReview) {
+    if (isInconsistent) {
+      judgmentCompleted = hasFinalDecision;
+    } else {
+      judgmentCompleted = hasFinalReview;
+    }
+  } else {
+    judgmentCompleted = singleJudgmentDone;
+  }
+
+  const needsPendingDecision = isInconsistent && !hasFinalDecision;
 
   const steps = useMemo(() => {
     const baseSteps = [
@@ -59,8 +74,17 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
     if (needsReview) {
       baseSteps.push(
         { key: 'preliminary', label: '初判', done: hasPreliminaryReview, desc: hasPreliminaryReview ? (judgment.preliminaryReview?.conclusion === 'pass' ? '初判合格' : '初判不合格') : '未开始' },
-        { key: 'final', label: '复核', done: hasFinalReview, partial: hasPreliminaryReview && !hasFinalReview, desc: hasFinalReview ? (judgment.finalReview?.conclusion === 'pass' ? '复核合格' : '复核不合格') : hasPreliminaryReview ? '待复核' : '未开始' }
+        { key: 'final', label: '复核', done: hasFinalReview && (!isInconsistent || hasFinalDecision), partial: (hasPreliminaryReview && !hasFinalReview) || needsPendingDecision, desc: hasFinalReview ? (judgment.finalReview?.conclusion === 'pass' ? '复核合格' : '复核不合格') : hasPreliminaryReview ? '待复核' : '未开始' }
       );
+      if (isInconsistent) {
+        baseSteps.push({
+          key: 'decision',
+          label: '最终裁定',
+          done: hasFinalDecision,
+          partial: hasFinalReview && !hasFinalDecision,
+          desc: hasFinalDecision ? `已裁定：${judgment.finalDecision?.finalConclusion === 'pass' ? '合格' : '不合格'}` : '待裁定',
+        });
+      }
     } else {
       baseSteps.push(
         { key: 'judgment', label: '质量判定', done: judgmentCompleted, partial: judgmentStarted && !judgmentCompleted, desc: judgmentCompleted ? (judgment.conclusion === 'pass' ? '合格' : '不合格') : judgmentStarted ? '进行中' : '未开始' }
@@ -68,7 +92,7 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
     }
 
     return baseSteps;
-  }, [patientFilled, hasImages, hasMarks, totalMarks, images.length, needsReview, hasPreliminaryReview, hasFinalReview, judgmentCompleted, judgmentStarted, judgment]);
+  }, [patientFilled, hasImages, hasMarks, totalMarks, images.length, needsReview, hasPreliminaryReview, hasFinalReview, singleJudgmentDone, judgmentStarted, judgment, isInconsistent, hasFinalDecision, needsPendingDecision, judgmentCompleted]);
 
   const progressPercent = useMemo(() => getReviewProgress(), [draft, getReviewProgress]);
   const completedSteps = steps.filter(s => s.done).length;
@@ -84,11 +108,13 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
       <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
         <div className={cn(
           "px-4 py-3 flex items-center justify-between cursor-pointer transition-colors",
-          !judgmentCompleted && needsReview && !hasFinalReview
-            ? "bg-orange-600 text-white"
-            : !judgmentCompleted
-              ? "bg-yellow-600 text-white"
-              : "bg-medical-600 text-white"
+          needsPendingDecision
+            ? "bg-red-600 text-white"
+            : !judgmentCompleted && needsReview && !hasFinalReview
+              ? "bg-orange-600 text-white"
+              : !judgmentCompleted
+                ? "bg-yellow-600 text-white"
+                : "bg-medical-600 text-white"
         )}
           onClick={() => setCollapsed(!collapsed)}
         >
@@ -98,7 +124,7 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
                 <div className="font-semibold text-sm flex items-center gap-2">
                   核查进度
                   {pendingNoteCount > 0 && (
-                    <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                    <span className="bg-white/25 text-white text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1">
                       <MessageSquareWarning size={10} />
                       {pendingNoteCount}
                     </span>
@@ -108,7 +134,8 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
                   {completedSteps}/{requiredSteps} 步骤完成 · {progressPercent}%
                   {!judgmentCompleted && (
                     <span className="ml-2 text-white font-medium">
-                      {needsReview && !hasPreliminaryReview ? '· 待初判' :
+                      {needsPendingDecision ? '· 待最终裁定' :
+                       needsReview && !hasPreliminaryReview ? '· 待初判' :
                        needsReview && !hasFinalReview ? '· 待复核' : '· 未完成判定'}
                     </span>
                   )}
@@ -140,11 +167,13 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
               <div
                 className={cn(
                   "h-full transition-all duration-500",
-                  !judgmentCompleted && needsReview && !hasFinalReview
-                    ? "bg-orange-500"
-                    : !judgmentCompleted
-                      ? "bg-yellow-500"
-                      : "bg-medical-500"
+                  needsPendingDecision
+                    ? "bg-red-500"
+                    : !judgmentCompleted && needsReview && !hasFinalReview
+                      ? "bg-orange-500"
+                      : !judgmentCompleted
+                        ? "bg-yellow-500"
+                        : "bg-medical-500"
                 )}
                 style={{ width: `${progressPercent}%` }}
               />
@@ -328,6 +357,27 @@ export function ProgressSidebar({ draft }: ProgressSidebarProps) {
                                 judgment.finalReview.conclusion === 'pass' ? 'text-green-600' : 'text-red-600'
                               )}>
                                 {judgment.finalReview.conclusion === 'pass' ? '合格' : '不合格'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {judgment.finalDecision && (
+                        <div className="rounded p-2 border border-purple-200 bg-purple-50">
+                          <div className="font-semibold text-purple-800 mb-1">
+                            最终裁定 · {judgment.finalDecision.deciderName}
+                          </div>
+                          <div className="space-y-0.5 text-gray-600">
+                            <div className="text-xs">
+                              裁定意见：{judgment.finalDecision.decisionOpinion}
+                            </div>
+                            <div className="flex justify-between pt-1">
+                              <span>最终结论</span>
+                              <span className={cn(
+                                'font-semibold',
+                                judgment.finalDecision.finalConclusion === 'pass' ? 'text-green-700' : 'text-red-700'
+                              )}>
+                                {judgment.finalDecision.finalConclusion === 'pass' ? '合格' : '不合格'}
                               </span>
                             </div>
                           </div>

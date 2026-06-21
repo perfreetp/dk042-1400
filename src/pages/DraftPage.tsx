@@ -26,6 +26,15 @@ import {
   Sun,
   Moon,
   BarChart3,
+  MessageSquareWarning,
+  ShieldAlert,
+  ClipboardList,
+  UserX,
+  ArrowRight,
+  ChevronRight,
+  Gavel,
+  ShieldCheck,
+  Users,
 } from 'lucide-react';
 
 type ConclusionFilter = 'all' | Conclusion;
@@ -45,6 +54,159 @@ const isToday = (timestamp: number): boolean => {
          today.getDate() === date.getDate();
 };
 
+interface ShiftStats {
+  total: number;
+  completed: number;
+  pendingReview: number;
+  incomplete: number;
+  pass: number;
+  fail: number;
+  pendingNotes: number;
+  pendingReviewList: Draft[];
+  incompleteList: Draft[];
+  completedList: Draft[];
+  pendingNoteList: Draft[];
+  allDrafts: Draft[];
+}
+
+interface ShiftHandoverDetailProps {
+  shift: ShiftType;
+  stats: ShiftStats;
+  getNextStep: (d: Draft) => string;
+  getStatusText: (d: Draft) => string;
+  onOpenDraft: (id: string) => void;
+}
+
+function ShiftHandoverDetail({ shift, stats, getNextStep, getStatusText, onOpenDraft }: ShiftHandoverDetailProps) {
+  const genderLabels: Record<string, string> = { male: '男', female: '女' };
+  const shiftName = shift === 'day' ? '白班' : '夜班';
+
+  type ListType = 'pendingReview' | 'incomplete' | 'pendingNote';
+  const getItemsForDraft = (draft: Draft, listType: ListType): { value: string; color: string }[] => {
+    switch (listType) {
+      case 'pendingReview':
+        return [
+          { value: getStatusText(draft), color: 'text-orange-600' },
+          { value: getNextStep(draft), color: 'text-orange-500' },
+        ];
+      case 'incomplete':
+        return [
+          { value: getStatusText(draft), color: 'text-yellow-600' },
+          { value: getNextStep(draft), color: 'text-yellow-500' },
+        ];
+      case 'pendingNote':
+        return [
+          { value: `待确认${(draft.handoverNotes?.filter(n => n.isPending).length || 0)}条`, color: 'text-red-600' },
+          { value: getStatusText(draft), color: 'text-red-500' },
+        ];
+    }
+  };
+
+  const DraftCardList = ({ title, icon, list, emptyText, badgeColor, listType }: {
+    title: string; icon: React.ReactNode; list: Draft[]; emptyText: string; badgeColor: string; listType: ListType
+  }) => (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className={`px-4 py-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 flex items-center justify-between`}>
+        <div className="flex items-center gap-2">
+          {icon}
+          <span className="font-semibold text-gray-800">{title}</span>
+        </div>
+        <span className={`text-xs px-2 py-0.5 rounded-full ${badgeColor}`}>
+          {list.length} 条
+        </span>
+      </div>
+      <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
+        {list.length === 0 ? (
+          <div className="p-6 text-center text-gray-400 text-sm flex items-center justify-center gap-2">
+            <CheckCircle size={16} className="text-green-500" />
+            {emptyText}
+          </div>
+        ) : (
+          list.map(draft => {
+            const draftItems = getItemsForDraft(draft, listType);
+            return (
+              <div
+                key={draft.id}
+                onClick={() => onOpenDraft(draft.id)}
+                className="px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText size={14} className="text-gray-400 flex-shrink-0" />
+                    <span className="font-medium text-gray-800 truncate">
+                      {draft.patientInfo.name || '未命名患者'}
+                    </span>
+                    <span className="text-gray-400 text-xs truncate">
+                      ({draft.patientInfo.studyNo || '无检查号'})
+                    </span>
+                  </div>
+                  <ChevronRight size={14} className="text-gray-400 flex-shrink-0" />
+                </div>
+                <div className="flex items-center justify-between text-xs ml-5">
+                  <span className="text-gray-500">
+                    {draft.patientInfo.bodyPart || '未填写部位'}
+                    {draft.patientInfo.gender ? ` · ${genderLabels[draft.patientInfo.gender]}` : ''}
+                    {draft.patientInfo.age ? ` · ${draft.patientInfo.age}岁` : ''}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs ml-5 mt-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {draftItems.map((item, idx) => (
+                      <span key={idx} className={`inline-flex items-center gap-0.5 ${item.color}`}>
+                        {item.value}
+                      </span>
+                    ))}
+                  </div>
+                  <span className="text-gray-400 ml-auto">
+                    {new Date(draft.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between px-1">
+        <div className="text-sm font-medium text-gray-600">
+          {shiftName}交班清单 · 按状态分类 · 点击条目直接打开
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        <DraftCardList
+          title="待复核清单"
+          icon={<ShieldAlert size={16} className="text-orange-600" />}
+          list={stats.pendingReviewList}
+          emptyText="✓ 暂无待复核项"
+          badgeColor="bg-orange-100 text-orange-700"
+          listType="pendingReview"
+        />
+        <DraftCardList
+          title="未完成清单"
+          icon={<ClipboardList size={16} className="text-yellow-600" />}
+          list={stats.incompleteList}
+          emptyText="✓ 暂无未完成项"
+          badgeColor="bg-yellow-100 text-yellow-700"
+          listType="incomplete"
+        />
+        <DraftCardList
+          title="待确认备注清单"
+          icon={<MessageSquareWarning size={16} className="text-red-600" />}
+          list={stats.pendingNoteList}
+          emptyText="✓ 暂无待确认备注"
+          badgeColor="bg-red-100 text-red-700"
+          listType="pendingNote"
+        />
+      </div>
+    </div>
+  );
+}
+
 interface DraftExportRow {
   studyNo: string;
   patientName: string;
@@ -63,6 +225,8 @@ interface DraftExportRow {
   reviewerName: string;
   reviewedAt: string;
   status: string;
+  nextStep: string;
+  pendingNotes: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -94,7 +258,7 @@ const genderLabels: Record<string, string> = {
 
 export function DraftPage() {
   const navigate = useNavigate();
-  const { drafts, loadDrafts, deleteDraft, clearOldDrafts, getDraftCount, getIncompleteCount } = useDraftStore();
+  const { drafts, loadDrafts, deleteDraft, clearOldDrafts, getDraftCount, getIncompleteCount, getPendingReviewCount } = useDraftStore();
 
   const [statusFilter, setStatusFilter] = useState<DraftStatus | 'all'>('all');
   const [conclusionFilter, setConclusionFilter] = useState<ConclusionFilter>('all');
@@ -106,6 +270,7 @@ export function DraftPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showFilters, setShowFilters] = useState(true);
   const [showShiftSummary, setShowShiftSummary] = useState(true);
+  const [activeShiftDetail, setActiveShiftDetail] = useState<ShiftType | null>(null);
   const [toast, setToast] = useState({ message: '', type: 'info' as 'success' | 'error' | 'info', visible: false });
 
   useEffect(() => {
@@ -113,6 +278,36 @@ export function DraftPage() {
   }, [loadDrafts]);
 
   const hasMarks = (draft: Draft) => draft.images.some(img => img.marks.length > 0);
+
+  const getNextStep = (draft: Draft): string => {
+    const j = draft.judgment;
+    const notes = draft.handoverNotes || [];
+    const pendingNotes = notes.filter(n => n.isPending).length;
+
+    if (j.needsReview) {
+      const hasP = !!j.preliminaryReview;
+      const hasF = !!j.finalReview;
+      const isIncon = hasP && hasF && j.isConsistent === false;
+      const hasDec = !!j.finalDecision;
+
+      if (!hasP) return '待初判';
+      if (!hasF) return '待复核';
+      if (isIncon && !hasDec) return '待最终裁定';
+      if (pendingNotes > 0) return `有${pendingNotes}条待确认备注`;
+      return '已完成';
+    } else {
+      if (!j.clarity || !j.completeness) return '待填写清晰度/完整性';
+      if (!j.conclusion) return '待生成结论';
+      if (pendingNotes > 0) return `有${pendingNotes}条待确认备注`;
+      return '已完成';
+    }
+  };
+
+  const getStatusText = (draft: Draft): string => {
+    if (draft.status === 'completed') return '已完成';
+    if (draft.status === 'pending_review') return '待复核';
+    return '未完成';
+  };
 
   const shiftSummary = useMemo(() => {
     const todayDrafts = drafts.filter(d => isToday(d.createdAt) || isToday(d.updatedAt));
@@ -127,13 +322,30 @@ export function DraftPage() {
       return isToday(time) && getShiftType(time) === 'night';
     });
 
-    const getShiftStats = (shiftDrafts: Draft[]) => ({
-      total: shiftDrafts.length,
-      completed: shiftDrafts.filter(d => d.status === 'completed').length,
-      incomplete: shiftDrafts.filter(d => d.status === 'incomplete').length,
-      pass: shiftDrafts.filter(d => d.judgment.conclusion === 'pass').length,
-      fail: shiftDrafts.filter(d => d.judgment.conclusion === 'fail').length,
-    });
+    const getShiftStats = (shiftDrafts: Draft[]) => {
+      const pendingReviewList = shiftDrafts.filter(d => d.status === 'pending_review');
+      const incompleteList = shiftDrafts.filter(d => d.status === 'incomplete');
+      const completedList = shiftDrafts.filter(d => d.status === 'completed');
+      const pendingNoteList = shiftDrafts.filter(d => {
+        const notes = d.handoverNotes || [];
+        return notes.some(n => n.isPending);
+      });
+
+      return {
+        total: shiftDrafts.length,
+        completed: completedList.length,
+        pendingReview: pendingReviewList.length,
+        incomplete: incompleteList.length,
+        pass: shiftDrafts.filter(d => d.judgment.conclusion === 'pass').length,
+        fail: shiftDrafts.filter(d => d.judgment.conclusion === 'fail').length,
+        pendingNotes: pendingNoteList.length,
+        pendingReviewList,
+        incompleteList,
+        completedList,
+        pendingNoteList,
+        allDrafts: shiftDrafts,
+      };
+    };
 
     return {
       day: getShiftStats(dayShift),
@@ -198,6 +410,7 @@ export function DraftPage() {
 
   const draftToExportRow = (draft: Draft): DraftExportRow => {
     const markCount = draft.images.reduce((sum, img) => sum + img.marks.length, 0);
+    const pendingNoteCount = (draft.handoverNotes || []).filter(n => n.isPending).length;
     return {
       studyNo: draft.patientInfo.studyNo,
       patientName: draft.patientInfo.name,
@@ -211,11 +424,13 @@ export function DraftPage() {
       completeness: completenessLabels[draft.judgment.completeness] || '',
       defectCount: draft.judgment.defects.length,
       defects: draft.judgment.defects.map(d => defectLabels[d]).join('|'),
-      conclusion: draft.judgment.conclusion === 'pass' ? '合格' : draft.judgment.conclusion === 'fail' ? '不合格' : '',
+      conclusion: draft.judgment.conclusion === 'pass' ? '合格' : draft.judgment.conclusion === 'fail' ? '不合格' : '未判定',
       rejectionReason: draft.judgment.rejectionReason,
       reviewerName: draft.judgment.reviewerName,
       reviewedAt: draft.judgment.reviewedAt ? formatDateTime(draft.judgment.reviewedAt) : '',
-      status: draft.status === 'completed' ? '已完成' : '未完成',
+      status: getStatusText(draft),
+      nextStep: getNextStep(draft),
+      pendingNotes: pendingNoteCount > 0 ? `${pendingNoteCount}条待确认` : '',
       createdAt: formatDateTime(draft.createdAt),
       updatedAt: formatDateTime(draft.updatedAt),
     };
@@ -229,10 +444,11 @@ export function DraftPage() {
 
     const rows = draftsToExport.map(draftToExportRow);
     const headers: (keyof DraftExportRow)[] = [
+      'status', 'nextStep', 'pendingNotes',
       'studyNo', 'patientName', 'gender', 'age', 'bodyPart', 'studyDate',
       'imageCount', 'markCount', 'clarity', 'completeness',
       'defectCount', 'defects', 'conclusion', 'rejectionReason',
-      'reviewerName', 'reviewedAt', 'status', 'createdAt', 'updatedAt'
+      'reviewerName', 'reviewedAt', 'createdAt', 'updatedAt'
     ];
     const headerLabels: Record<keyof DraftExportRow, string> = {
       studyNo: '检查号',
@@ -252,6 +468,8 @@ export function DraftPage() {
       reviewerName: '审核人员',
       reviewedAt: '审核时间',
       status: '核查状态',
+      nextStep: '下一步提示',
+      pendingNotes: '交接备注',
       createdAt: '创建时间',
       updatedAt: '更新时间',
     };
@@ -335,15 +553,14 @@ export function DraftPage() {
   };
 
   const handleExportShift = (shift: ShiftType) => {
-    const today = new Date();
     const shiftDrafts = drafts.filter(d => {
       const time = d.updatedAt || d.createdAt;
       if (!isToday(time)) return false;
       if (getShiftType(time) !== shift) return false;
-      return d.status === 'completed';
+      return true;
     });
     const shiftName = shift === 'day' ? '白班' : '夜班';
-    exportToCSV(shiftDrafts, `今日${shiftName}质控汇总`);
+    exportToCSV(shiftDrafts, `今日${shiftName}交班汇总表`);
   };
 
   const handleFilterByShift = (shift: ShiftFilter) => {
@@ -363,12 +580,20 @@ export function DraftPage() {
     setTimeout(() => setToast((prev) => ({ ...prev, visible: false })), 3000);
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, draft?: Draft) => {
     if (status === 'completed') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-green-100 text-green-700 rounded-full">
           <CheckCircle size={12} />
           已完成
+        </span>
+      );
+    }
+    if (status === 'pending_review') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-orange-100 text-orange-700 rounded-full">
+          <ShieldCheck size={12} />
+          待复核
         </span>
       );
     }
@@ -403,9 +628,12 @@ export function DraftPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-serif font-bold text-medical-800">草稿箱</h2>
+          <h2 className="text-2xl font-serif font-bold text-medical-800">草稿箱 · 交班工作台</h2>
           <p className="text-gray-500 text-sm mt-1">
-            共 {getDraftCount()} 份草稿，{getIncompleteCount()} 份未完成，{getDraftCount() - getIncompleteCount()} 份已完成
+            共 {getDraftCount()} 份草稿，
+            <span className="text-yellow-600 font-medium">{getIncompleteCount()}</span> 份未完成，
+            <span className="text-orange-600 font-medium">{getPendingReviewCount()}</span> 份待复核，
+            <span className="text-green-600 font-medium">{getDraftCount() - getIncompleteCount() - getPendingReviewCount()}</span> 份已完成
           </p>
         </div>
         <div className="flex gap-2">
@@ -445,108 +673,162 @@ export function DraftPage() {
         </div>
 
         {showShiftSummary && (
-          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className={`rounded-xl border-2 p-4 transition-all cursor-pointer ${
-              shiftFilter === 'day' ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white hover:border-amber-300'
-            }`}
-            onClick={() => handleFilterByShift(shiftFilter === 'day' ? 'all' : 'day')}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
-                    <Sun size={20} className="text-amber-600" />
-                  </div>
-                  <div>
-                    <div className="font-semibold text-gray-800">白班</div>
-                    <div className="text-xs text-gray-500">08:00 - 18:00</div>
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant={shiftSummary.day.completed > 0 ? 'success' : 'outline'}
-                  onClick={(e) => { e.stopPropagation(); handleExportShift('day'); }}
-                  disabled={shiftSummary.day.completed === 0}
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className={`rounded-xl border-2 p-4 transition-all ${
+                activeShiftDetail === 'day' ? 'border-amber-500 bg-amber-50 shadow-md' :
+                shiftFilter === 'day' ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white hover:border-amber-300'
+              }`}>
+                <div className="flex items-center justify-between mb-3 cursor-pointer"
+                  onClick={() => setActiveShiftDetail(activeShiftDetail === 'day' ? null : 'day')}
                 >
-                  <Download size={14} className="mr-1" />
-                  导出汇总
-                </Button>
+                  <div className="flex items-center gap-2">
+                    <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                      <Sun size={20} className="text-amber-600" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-gray-800">白班</div>
+                      <div className="text-xs text-gray-500">08:00 - 18:00 · 点击展开交班清单</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant={shiftSummary.day.total > 0 ? 'success' : 'outline'}
+                      onClick={(e) => { e.stopPropagation(); handleExportShift('day'); }}
+                      disabled={shiftSummary.day.total === 0}
+                    >
+                      <Download size={14} className="mr-1" />
+                      导出交班表
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={(e) => { e.stopPropagation(); handleFilterByShift(shiftFilter === 'day' ? 'all' : 'day'); }}
+                    >
+                      {shiftFilter === 'day' ? '显示全部' : '筛选白班'}
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-5 gap-2 text-center">
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <div className="text-xl font-bold text-gray-800">{shiftSummary.day.total}</div>
+                    <div className="text-xs text-gray-500">总计</div>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-2">
+                    <div className="text-xl font-bold text-green-600">{shiftSummary.day.completed}</div>
+                    <div className="text-xs text-gray-500">已完成</div>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-2">
+                    <div className="text-xl font-bold text-orange-600">{shiftSummary.day.pendingReview}</div>
+                    <div className="text-xs text-gray-500">待复核</div>
+                  </div>
+                  <div className="bg-yellow-50 rounded-lg p-2">
+                    <div className="text-xl font-bold text-yellow-600">{shiftSummary.day.incomplete}</div>
+                    <div className="text-xs text-gray-500">未完成</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1">
+                    <div className="bg-green-50 rounded-lg p-1.5">
+                      <div className="text-sm font-bold text-green-600">{shiftSummary.day.pass}</div>
+                      <div className="text-[10px] text-gray-500">合格</div>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-1.5">
+                      <div className="text-sm font-bold text-red-600">{shiftSummary.day.fail}</div>
+                      <div className="text-[10px] text-gray-500">不合格</div>
+                    </div>
+                  </div>
+                </div>
+                {shiftSummary.day.pendingNotes > 0 && (
+                  <div className="mt-2 text-xs text-red-600 bg-red-50 px-2 py-1 rounded flex items-center gap-1">
+                    <MessageSquareWarning size={12} />
+                    有 {shiftSummary.day.pendingNotes} 条待确认交接备注
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-4 gap-2 text-center">
-                <div className="bg-gray-50 rounded-lg p-2">
-                  <div className="text-xl font-bold text-gray-800">{shiftSummary.day.total}</div>
-                  <div className="text-xs text-gray-500">总计</div>
-                </div>
-                <div className="bg-green-50 rounded-lg p-2">
-                  <div className="text-xl font-bold text-green-600">{shiftSummary.day.completed}</div>
-                  <div className="text-xs text-gray-500">已完成</div>
-                </div>
-                <div className="bg-yellow-50 rounded-lg p-2">
-                  <div className="text-xl font-bold text-yellow-600">{shiftSummary.day.incomplete}</div>
-                  <div className="text-xs text-gray-500">未完成</div>
-                </div>
-                <div className="grid grid-cols-2 gap-1">
-                  <div className="bg-green-50 rounded-lg p-1.5">
-                    <div className="text-sm font-bold text-green-600">{shiftSummary.day.pass}</div>
-                    <div className="text-[10px] text-gray-500">合格</div>
+
+              <div className={`rounded-xl border-2 p-4 transition-all ${
+                activeShiftDetail === 'night' ? 'border-indigo-500 bg-indigo-50 shadow-md' :
+                shiftFilter === 'night' ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white hover:border-indigo-300'
+              }`}>
+                <div className="flex items-center justify-between mb-3 cursor-pointer"
+                  onClick={() => setActiveShiftDetail(activeShiftDetail === 'night' ? null : 'night')}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
+                      <Moon size={20} className="text-indigo-600" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-gray-800">夜班</div>
+                      <div className="text-xs text-gray-500">18:00 - 次日08:00 · 点击展开交班清单</div>
+                    </div>
                   </div>
-                  <div className="bg-red-50 rounded-lg p-1.5">
-                    <div className="text-sm font-bold text-red-600">{shiftSummary.day.fail}</div>
-                    <div className="text-[10px] text-gray-500">不合格</div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant={shiftSummary.night.total > 0 ? 'success' : 'outline'}
+                      onClick={(e) => { e.stopPropagation(); handleExportShift('night'); }}
+                      disabled={shiftSummary.night.total === 0}
+                    >
+                      <Download size={14} className="mr-1" />
+                      导出交班表
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={(e) => { e.stopPropagation(); handleFilterByShift(shiftFilter === 'night' ? 'all' : 'night'); }}
+                    >
+                      {shiftFilter === 'night' ? '显示全部' : '筛选夜班'}
+                    </Button>
                   </div>
                 </div>
+                <div className="grid grid-cols-5 gap-2 text-center">
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <div className="text-xl font-bold text-gray-800">{shiftSummary.night.total}</div>
+                    <div className="text-xs text-gray-500">总计</div>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-2">
+                    <div className="text-xl font-bold text-green-600">{shiftSummary.night.completed}</div>
+                    <div className="text-xs text-gray-500">已完成</div>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-2">
+                    <div className="text-xl font-bold text-orange-600">{shiftSummary.night.pendingReview}</div>
+                    <div className="text-xs text-gray-500">待复核</div>
+                  </div>
+                  <div className="bg-yellow-50 rounded-lg p-2">
+                    <div className="text-xl font-bold text-yellow-600">{shiftSummary.night.incomplete}</div>
+                    <div className="text-xs text-gray-500">未完成</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1">
+                    <div className="bg-green-50 rounded-lg p-1.5">
+                      <div className="text-sm font-bold text-green-600">{shiftSummary.night.pass}</div>
+                      <div className="text-[10px] text-gray-500">合格</div>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-1.5">
+                      <div className="text-sm font-bold text-red-600">{shiftSummary.night.fail}</div>
+                      <div className="text-[10px] text-gray-500">不合格</div>
+                    </div>
+                  </div>
+                </div>
+                {shiftSummary.night.pendingNotes > 0 && (
+                  <div className="mt-2 text-xs text-red-600 bg-red-50 px-2 py-1 rounded flex items-center gap-1">
+                    <MessageSquareWarning size={12} />
+                    有 {shiftSummary.night.pendingNotes} 条待确认交接备注
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className={`rounded-xl border-2 p-4 transition-all cursor-pointer ${
-              shiftFilter === 'night' ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white hover:border-indigo-300'
-            }`}
-            onClick={() => handleFilterByShift(shiftFilter === 'night' ? 'all' : 'night')}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
-                    <Moon size={20} className="text-indigo-600" />
-                  </div>
-                  <div>
-                    <div className="font-semibold text-gray-800">夜班</div>
-                    <div className="text-xs text-gray-500">18:00 - 次日08:00</div>
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant={shiftSummary.night.completed > 0 ? 'success' : 'outline'}
-                  onClick={(e) => { e.stopPropagation(); handleExportShift('night'); }}
-                  disabled={shiftSummary.night.completed === 0}
-                >
-                  <Download size={14} className="mr-1" />
-                  导出汇总
-                </Button>
+            {activeShiftDetail && (
+              <div className="border-t border-gray-200 pt-4 space-y-4">
+                <ShiftHandoverDetail
+                  shift={activeShiftDetail}
+                  stats={activeShiftDetail === 'day' ? shiftSummary.day : shiftSummary.night}
+                  getNextStep={getNextStep}
+                  getStatusText={getStatusText}
+                  onOpenDraft={(id) => navigate(`/viewer/${id}`)}
+                />
               </div>
-              <div className="grid grid-cols-4 gap-2 text-center">
-                <div className="bg-gray-50 rounded-lg p-2">
-                  <div className="text-xl font-bold text-gray-800">{shiftSummary.night.total}</div>
-                  <div className="text-xs text-gray-500">总计</div>
-                </div>
-                <div className="bg-green-50 rounded-lg p-2">
-                  <div className="text-xl font-bold text-green-600">{shiftSummary.night.completed}</div>
-                  <div className="text-xs text-gray-500">已完成</div>
-                </div>
-                <div className="bg-yellow-50 rounded-lg p-2">
-                  <div className="text-xl font-bold text-yellow-600">{shiftSummary.night.incomplete}</div>
-                  <div className="text-xs text-gray-500">未完成</div>
-                </div>
-                <div className="grid grid-cols-2 gap-1">
-                  <div className="bg-green-50 rounded-lg p-1.5">
-                    <div className="text-sm font-bold text-green-600">{shiftSummary.night.pass}</div>
-                    <div className="text-[10px] text-gray-500">合格</div>
-                  </div>
-                  <div className="bg-red-50 rounded-lg p-1.5">
-                    <div className="text-sm font-bold text-red-600">{shiftSummary.night.fail}</div>
-                    <div className="text-[10px] text-gray-500">不合格</div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         )}
       </Card>
@@ -732,9 +1014,15 @@ export function DraftPage() {
           {filteredDrafts.map((draft) => {
             const markCount = getMarkCount(draft);
             const isSelected = selectedIds.has(draft.id);
+            const pendingNoteCount = (draft.handoverNotes || []).filter(n => n.isPending).length;
+
+            const statusRingClass =
+              draft.status === 'pending_review' ? 'border-l-4 border-l-orange-500 border border-orange-200' :
+              draft.status === 'incomplete' ? 'border-l-4 border-l-yellow-500 border border-yellow-200' :
+              draft.status === 'completed' ? 'border-l-4 border-l-green-500 border border-green-200' : '';
 
             return (
-              <Card key={draft.id} className={`hover:shadow-lg transition-shadow ${isSelected ? 'ring-2 ring-medical-400' : ''}`}>
+              <Card key={draft.id} className={`hover:shadow-lg transition-shadow ${statusRingClass} ${isSelected ? 'ring-2 ring-medical-400' : ''}`}>
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-4 flex-1">
                     <button
@@ -761,7 +1049,13 @@ export function DraftPage() {
                         <h3 className="text-lg font-semibold text-gray-800">
                           {draft.patientInfo.name || '未命名患者'}
                         </h3>
-                        {getStatusBadge(draft.status)}
+                        {getStatusBadge(draft.status, draft)}
+                        {pendingNoteCount > 0 && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-red-100 text-red-700 rounded-full">
+                            <MessageSquareWarning size={12} />
+                            {pendingNoteCount}条待确认
+                          </span>
+                        )}
                         {draft.judgment.conclusion && (
                           <span className="px-2.5 py-1 text-xs bg-gray-100 rounded-full">
                             {getConclusionLabel(draft.judgment.conclusion)}
@@ -774,6 +1068,12 @@ export function DraftPage() {
                           </span>
                         )}
                       </div>
+                      {draft.status !== 'completed' && (
+                        <div className="text-xs mb-2 text-gray-600 flex items-center gap-1.5">
+                          <ArrowRight size={12} className="text-blue-500" />
+                          <span>下一步：<span className="font-medium text-gray-800">{getNextStep(draft)}</span></span>
+                        </div>
+                      )}
 
                       <div className="grid grid-cols-2 lg:grid-cols-5 gap-x-6 gap-y-1.5 text-sm mb-2">
                         <div>
@@ -825,6 +1125,11 @@ export function DraftPage() {
                       <Button variant="primary" size="sm" onClick={() => handleContinue(draft.id)}>
                         <Edit size={14} className="mr-1.5" />
                         继续编辑
+                      </Button>
+                    ) : draft.status === 'pending_review' ? (
+                      <Button variant="primary" size="sm" onClick={() => handleContinue(draft.id)}>
+                        <ShieldCheck size={14} className="mr-1.5" />
+                        继续审核
                       </Button>
                     ) : (
                       <Button variant="primary" size="sm" onClick={() => handleView(draft.id)}>

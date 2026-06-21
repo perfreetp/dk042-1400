@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Draft } from '@/types';
+import type { Draft, Judgment } from '@/types';
 import { getDrafts, deleteDraft as removeDraft, clearOldDrafts as cleanOld } from '@/utils/storage';
 
 interface DraftState {
@@ -13,6 +13,7 @@ interface DraftActions {
   clearOldDrafts: (days?: number) => number;
   getDraftCount: () => number;
   getIncompleteCount: () => number;
+  getPendingReviewCount: () => number;
 }
 
 type DraftStore = DraftState & DraftActions;
@@ -22,14 +23,48 @@ const initialState: DraftState = {
   isLoading: false,
 };
 
+const createEmptyJudgment = (): Judgment => ({
+  clarity: '',
+  completeness: '',
+  defects: [],
+  rejectionReason: '',
+  conclusion: '',
+  reviewerName: '',
+  reviewedAt: 0,
+  preliminaryReview: null,
+  finalReview: null,
+  needsReview: false,
+  isConsistent: null,
+  finalDecision: null,
+});
+
+const migrateDraft = (draft: any): Draft => {
+  const j = draft.judgment || createEmptyJudgment();
+  return {
+    ...draft,
+    status: draft.status === 'completed' ? 'completed' : (draft.status === 'pending_review' ? 'pending_review' : 'incomplete'),
+    handoverNotes: Array.isArray(draft.handoverNotes) ? draft.handoverNotes : [],
+    judgment: {
+      ...createEmptyJudgment(),
+      ...j,
+      preliminaryReview: j.preliminaryReview || null,
+      finalReview: j.finalReview || null,
+      needsReview: j.needsReview || false,
+      isConsistent: j.isConsistent !== undefined ? j.isConsistent : null,
+      finalDecision: j.finalDecision || null,
+    },
+  };
+};
+
 export const useDraftStore = create<DraftStore>((set, get) => ({
   ...initialState,
 
   loadDrafts: () => {
     set({ isLoading: true });
     try {
-      const drafts = getDrafts();
-      const sortedDrafts = drafts.sort((a, b) => b.updatedAt - a.updatedAt);
+      const rawDrafts = getDrafts();
+      const migratedDrafts: Draft[] = rawDrafts.map(d => migrateDraft(d));
+      const sortedDrafts = migratedDrafts.sort((a, b) => b.updatedAt - a.updatedAt);
       set({ drafts: sortedDrafts });
     } catch (error) {
       console.error('Failed to load drafts:', error);
@@ -73,5 +108,9 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
 
   getIncompleteCount: () => {
     return get().drafts.filter((d) => d.status === 'incomplete').length;
+  },
+
+  getPendingReviewCount: () => {
+    return get().drafts.filter((d) => d.status === 'pending_review').length;
   },
 }));

@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useReviewStore } from '@/store/useReviewStore';
-import { PRESET_PHRASES, type DefectType, type ClarityLevel, type CompletenessLevel, type ReviewResult } from '@/types';
+import { PRESET_PHRASES, type DefectType, type ClarityLevel, type CompletenessLevel, type ReviewResult, type FinalDecision, type Conclusion } from '@/types';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
-import { Check, AlertCircle, ThumbsUp, ThumbsDown, Wand2, Save, Printer, ArrowLeft, FileText, UserCheck, Users, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Check, AlertCircle, ThumbsUp, ThumbsDown, Wand2, Save, Printer, ArrowLeft, FileText, UserCheck, Users, RefreshCw, ShieldCheck, Gavel, Scale } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
@@ -45,6 +45,18 @@ const createEmptyFormState = (): ReviewFormState => ({
   reviewerName: '',
 });
 
+interface DecisionFormState {
+  deciderName: string;
+  decisionOpinion: string;
+  finalConclusion: Conclusion;
+}
+
+const createEmptyDecisionForm = (): DecisionFormState => ({
+  deciderName: '',
+  decisionOpinion: '',
+  finalConclusion: '',
+});
+
 export function JudgmentForm() {
   const navigate = useNavigate();
   const {
@@ -58,10 +70,13 @@ export function JudgmentForm() {
     setPreliminaryReview,
     setFinalReview,
     clearFinalReview,
+    setFinalDecision,
+    clearFinalDecision,
   } = useReviewStore();
 
   const [preliminaryForm, setPreliminaryForm] = useState<ReviewFormState>(createEmptyFormState());
   const [finalForm, setFinalForm] = useState<ReviewFormState>(createEmptyFormState());
+  const [decisionForm, setDecisionForm] = useState<DecisionFormState>(createEmptyDecisionForm());
 
   if (!currentDraft) return null;
 
@@ -69,6 +84,9 @@ export function JudgmentForm() {
   const needsReview = judgment.needsReview;
   const hasPreliminary = !!judgment.preliminaryReview;
   const hasFinal = !!judgment.finalReview;
+  const hasFinalDecision = !!judgment.finalDecision;
+  const isInconsistent = needsReview && hasPreliminary && hasFinal && judgment.isConsistent === false;
+  const needsDecision = isInconsistent && !hasFinalDecision;
 
   const getConclusionLabel = (conclusion: string) => {
     if (conclusion === 'pass') return '合格';
@@ -77,8 +95,8 @@ export function JudgmentForm() {
   };
 
   const toggleNeedsReview = () => {
-    if (hasPreliminary || hasFinal) {
-      if (!confirm('切换模式将清除已有的初判/复核数据，确定继续吗？')) {
+    if (hasPreliminary || hasFinal || hasFinalDecision) {
+      if (!confirm('切换模式将清除已有的初判/复核/裁定数据，确定继续吗？')) {
         return;
       }
     }
@@ -87,9 +105,11 @@ export function JudgmentForm() {
       preliminaryReview: null,
       finalReview: null,
       isConsistent: null,
+      finalDecision: null,
     });
     setPreliminaryForm(createEmptyFormState());
     setFinalForm(createEmptyFormState());
+    setDecisionForm(createEmptyDecisionForm());
     showToast(needsReview ? '已切换为单人判定模式' : '已开启双人复核模式', 'info');
   };
 
@@ -286,10 +306,42 @@ export function JudgmentForm() {
   };
 
   const handleClearFinal = () => {
-    if (confirm('确定要清除复核数据吗？')) {
+    if (confirm('确定要清除复核数据吗？这将同时清除最终裁定。')) {
       clearFinalReview();
       setFinalForm(createEmptyFormState());
-      showToast('复核数据已清除', 'info');
+      setDecisionForm(createEmptyDecisionForm());
+      showToast('复核和裁定数据已清除', 'info');
+    }
+  };
+
+  const handleSaveDecision = () => {
+    if (!decisionForm.deciderName.trim()) {
+      showToast('请填写裁定人姓名', 'error');
+      return;
+    }
+    if (!decisionForm.finalConclusion) {
+      showToast('请选择最终结论', 'error');
+      return;
+    }
+    if (!decisionForm.decisionOpinion.trim()) {
+      showToast('请填写裁定意见', 'error');
+      return;
+    }
+    const decision: FinalDecision = {
+      deciderName: decisionForm.deciderName.trim(),
+      decidedAt: Date.now(),
+      decisionOpinion: decisionForm.decisionOpinion.trim(),
+      finalConclusion: decisionForm.finalConclusion,
+    };
+    setFinalDecision(decision);
+    showToast('最终裁定已记录', 'success');
+  };
+
+  const handleClearDecision = () => {
+    if (confirm('确定要清除最终裁定吗？')) {
+      clearFinalDecision();
+      setDecisionForm(createEmptyDecisionForm());
+      showToast('最终裁定已清除', 'info');
     }
   };
 
@@ -718,6 +770,130 @@ export function JudgmentForm() {
             finalForm,
             handleSaveFinal,
             judgment.finalReview
+          )}
+
+          {(needsDecision || hasFinalDecision) && (
+            <div className={`rounded-xl border-2 p-5 ${
+              hasFinalDecision ? 'border-purple-300 bg-purple-50' : 'border-red-300 bg-red-50'
+            }`}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+                    hasFinalDecision ? 'bg-purple-200' : 'bg-red-200'
+                  }`}>
+                    <Gavel size={22} className={hasFinalDecision ? 'text-purple-700' : 'text-red-700'} />
+                  </div>
+                  <div>
+                    <div className={`font-semibold ${hasFinalDecision ? 'text-purple-800' : 'text-red-800'}`}>
+                      {hasFinalDecision ? '最终裁定（已记录）' : '最终裁定（待处理）'}
+                    </div>
+                    <div className={`text-sm ${hasFinalDecision ? 'text-purple-600' : 'text-red-600'}`}>
+                      {hasFinalDecision
+                        ? '初判与复核结论不一致，已由质控负责人裁定。'
+                        : '初判与复核结论不一致，请由质控负责人进行最终裁定。'}
+                    </div>
+                  </div>
+                </div>
+                {hasFinalDecision && (
+                  <Button size="sm" variant="outline" onClick={handleClearDecision}>
+                    <RefreshCw size={14} className="mr-1" />
+                    重新裁定
+                  </Button>
+                )}
+              </div>
+
+              {hasFinalDecision && judgment.finalDecision ? (
+                <div className="bg-white rounded-lg p-4 space-y-3 border border-purple-200">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">裁定人</span>
+                      <div className="font-semibold text-gray-900 mt-0.5">{judgment.finalDecision.deciderName}</div>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">裁定时间</span>
+                      <div className="font-medium text-gray-700 mt-0.5">
+                        {new Date(judgment.finalDecision.decidedAt).toLocaleString('zh-CN')}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-sm">
+                    <span className="text-gray-500">裁定意见</span>
+                    <div className="text-gray-800 mt-1 bg-gray-50 p-3 rounded-lg border border-gray-200">
+                      {judgment.finalDecision.decisionOpinion}
+                    </div>
+                  </div>
+                  <div className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg font-semibold ${
+                    judgment.finalDecision.finalConclusion === 'pass'
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-red-100 text-red-700'
+                  }`}>
+                    <Scale size={16} />
+                    最终结论：{judgment.finalDecision.finalConclusion === 'pass' ? '合格' : '不合格'}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">裁定人姓名 *</label>
+                      <input
+                        type="text"
+                        value={decisionForm.deciderName}
+                        onChange={(e) => setDecisionForm(prev => ({ ...prev, deciderName: e.target.value }))}
+                        placeholder="请输入质控负责人姓名"
+                        className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">最终结论 *</label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setDecisionForm(prev => ({ ...prev, finalConclusion: 'pass' }))}
+                          className={`flex-1 px-4 py-2.5 rounded-lg border-2 font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                            decisionForm.finalConclusion === 'pass'
+                              ? 'border-green-500 bg-green-50 text-green-700'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                          }`}
+                        >
+                          <ThumbsUp size={16} />
+                          合格
+                        </button>
+                        <button
+                          onClick={() => setDecisionForm(prev => ({ ...prev, finalConclusion: 'fail' }))}
+                          className={`flex-1 px-4 py-2.5 rounded-lg border-2 font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                            decisionForm.finalConclusion === 'fail'
+                              ? 'border-red-500 bg-red-50 text-red-700'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                          }`}
+                        >
+                          <ThumbsDown size={16} />
+                          不合格
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">裁定意见 *</label>
+                    <textarea
+                      value={decisionForm.decisionOpinion}
+                      onChange={(e) => setDecisionForm(prev => ({ ...prev, decisionOpinion: e.target.value }))}
+                      placeholder="请说明裁定理由，包括采信哪一方结论、原因说明和处理建议..."
+                      rows={4}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white text-sm resize-none"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="secondary" onClick={() => setDecisionForm(createEmptyDecisionForm())}>
+                      清空
+                    </Button>
+                    <Button variant="primary" onClick={handleSaveDecision} className="bg-red-600 hover:bg-red-700">
+                      <Gavel size={16} className="mr-2" />
+                      记录最终裁定
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       ) : (
